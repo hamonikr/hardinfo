@@ -1,14 +1,31 @@
 HARDINFO
 ========
 
-HardInfo is a system profiler and benchmark for Linux systems. It is able to
-obtain information from both hardware and basic software, and organize them
-in a simple to use GUI.
+시스템 하드웨어 정보를 보여주고 성능을 벤치마크 할 수 있는 프로그램입니다.
 
-Features include:
-- Report generation (in either HTML or plain text)
-- Benchmark result synchronization
-- Ability to explore the information on remote computers
+![screenshot](app.png)
+
+
+ * upstream : https://github.com/lpereira/hardinfo
+
+
+# Install
+## HamoniKR 사용자의 경우
+터미널을 열고(Ctrl+Alt+T) 아래 명령어를 입력하세요.
+
+```
+sudo apt update
+sudo apt install -y hardinfo
+```
+
+## Ubuntu, LinuxMint 등 다른 우분투 계열 배포판 사용자의 경우
+터미널을 열고(Ctrl+Alt+T) 아래 명령어를 입력하세요.
+
+```
+wget -qO- https://pkg.hamonikr.org/add-hamonikr.apt | sudo -E bash -
+
+sudo apt install -y hardinfo
+```
 
 Status
 ------
