@@ -1,0 +1,10 @@
+Makefile
+config.h
+*.so
+*.o
+*~
+arch/this
+build/
+test/build-*
+po/*.old
+

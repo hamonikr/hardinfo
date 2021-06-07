@@ -1,0 +1,351 @@
+hardinfo (0.5.1+git20180227-2-hamonikr1) jin; urgency=medium
+
+  * Add Korean translation
+  * Update hardinfo.desktop.cmake
+
+ -- HamoniKR <pkg@hamonikr.org>  Mon, 07 Jun 2021 09:38:07 +0900
+ 
+hardinfo (0.5.1+git20180227-2) unstable; urgency=medium
+
+  * Change my email to tsimonq2@debian.org now that I am a Debian Developer.
+  * Reflect the move in Salsa namespace.
+
+ -- Simon Quigley <tsimonq2@debian.org>  Sun, 23 Dec 2018 23:56:13 -0600
+
+hardinfo (0.5.1+git20180227-1) unstable; urgency=medium
+
+  * Update to latest upstream Git commit (3d78bd2).
+  * Bump Standards-version to 4.1.3, no changes needed.
+  * Bump debhelper compat to 11, no changes needed.
+  * Add zlib1g-dev as a build dependency to make sure that the CPU ZLib
+    benchmark works as intended (Closes: #536244).
+  * Update Vcs-* to reflect the move to Salsa.
+
+ -- Simon Quigley <tsimonq2@ubuntu.com>  Tue, 27 Feb 2018 22:47:46 -0600
+
+hardinfo (0.5.1+git20171103-1) unstable; urgency=medium
+
+  * Update to latest upstream Git commit (9ea63eb).
+  * Bump Standards-version to 4.1.1, no changes needed.
+
+ -- Simon Quigley <tsimonq2@ubuntu.com>  Sat, 25 Nov 2017 13:36:24 -0600
+
+hardinfo (0.5.1+git20170815-1) unstable; urgency=medium
+
+  * Update to latest upstream Git commit (0ca8d0) so that we can drop all
+    patches, as they have all been applied upstream.
+  * Update Standards-version to 4.0.1, no changes needed.
+
+ -- Simon Quigley <tsimonq2@ubuntu.com>  Wed, 16 Aug 2017 04:32:57 -0500
+
+hardinfo (0.5.1+git20170620-2) unstable; urgency=medium
+
+  * Fix build on ppc64el (Closes: #865776).
+  * Update FSF address to new one in debian/changelog's LGPL-2.1+ stanza.
+  * Make the build reproducible (Closes: #833379).
+
+ -- Simon Quigley <tsimonq2@ubuntu.com>  Fri, 14 Jul 2017 06:04:21 -0500
+
+hardinfo (0.5.1+git20170620-1) unstable; urgency=medium
+
+  * Update to latest upstream Git commit (1f791f3) to fix a few issues.
+    - Fix build on arm64 (Closes: #779465).
+  * Adopt the package (Closes: #852525).
+  * Fix whitespace and run wrap-and-sort.
+  * Bump Standards-version to 4.0.0. No changes needed.
+  * Bump debhelper compat version to 10.
+  * Use source format 3.0 (quilt).
+  * Rewrite and use the dh sequencer in debian/rules, build with cmake.
+  * Add ${misc:Depends} to hardinfo's dependencies.
+  * Rewrite debian/copyright to use copyright-format 1.0.
+  * Add Homepage and Vcs-* fields in debian/control.
+  * Merge changes from Ubuntu (Closes: #696407, #554783):
+    - Add glibc-version.patch for compatibility with a different glibc
+      location.
+    - Recommend lm-sensors in order to read information from sensors.
+  * Rewrite debian/watch to pull from new upstream location.
+  * Override the spelling-error-in-binary Lintian tag because it's the name of
+    a company.
+
+ -- Simon Quigley <tsimonq2@ubuntu.com>  Fri, 23 Jun 2017 03:36:18 -0500
+
+hardinfo (0.5.1-1.5) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Fix "FTBFS with clang instead of gcc":
+    patch Makefile* to add "-std=gnu89" to CFLAGS.
+    (Closes: #757525)
+
+ -- gregor herrmann <gregoa@debian.org>  Wed, 22 Jul 2015 17:51:45 +0200
+
+hardinfo (0.5.1-1.4) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * fix FTBFS "ld: cannot find -lselinux" by adding a build-dep on
+    libselinux1-dev [!kfreebsd-i386 !kfreebsd-amd64 !hurd-i386]
+    (Closes: #747059).
+
+ -- HIGUCHI Daisuke (VDR dai) <dai@debian.org>  Wed, 07 May 2014 21:12:18 +0900
+
+hardinfo (0.5.1-1.3) unstable; urgency=medium
+
+  * Non-maintainer upload.
+  * Fix FTBFS "ld: cannot find -llzma" by adding a build-dep on liblzma-dev.
+    (Closes: #713717)
+
+ -- Vincent Cheng <vcheng@debian.org>  Tue, 25 Mar 2014 15:47:36 -0700
+
+hardinfo (0.5.1-1.2) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * Fix "FTBFS: ld: cannot find -lffi":
+    add patch from Ubuntu / Julien Lavergne:
+    + debian/control:
+      - Build-depends on libffi-dev to fix FTBFS (LP: #831185)
+    (Closes: #652179)
+
+ -- gregor herrmann <gregoa@debian.org>  Thu, 05 Jan 2012 16:14:54 +0100
+
+hardinfo (0.5.1-1.1) unstable; urgency=low
+
+  * Non-maintainer upload.
+  * [cd677eda] Move files from /usr/lib64 to /usr/lib. (Closes: #557569)
+    - thanks to Kurt Roeckx
+
+ -- Bernd Zeimetz <bzed@debian.org>  Fri, 22 Jan 2010 21:22:24 +0100
+
+hardinfo (0.5.1-1) unstable; urgency=low
+
+  * New upstream version. (Closes: #530290, #517591)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Thu, 24 Sep 2009 15:13:54 -0300
+
+hardinfo (0.5c-1) unstable; urgency=low
+
+  * New upstream version.
+     (Closes: #517591, #511237, #457703, #519256, #449250, #457820, #497758)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Sat, 28 Mar 2009 22:55:02 -0300
+
+hardinfo (0.4.2.3-5) unstable; urgency=low
+
+  * Fixed location on menu. (Closes: #487569)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Sun, 06 Jul 2008 19:01:51 -0300
+
+hardinfo (0.4.2.3-4) unstable; urgency=low
+
+  * Fixed LSPCIPATH on configure. (Closes: #482381)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Tue, 27 May 2008 21:17:23 -0300
+
+hardinfo (0.4.2.3-3) unstable; urgency=low
+
+  * changed modules install dir for amd64
+    (thanks to ucko@d.o). (Closes: #468105)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Tue, 26 Feb 2008 23:52:45 -0300
+
+hardinfo (0.4.2.3-2) unstable; urgency=low
+
+  * fixed desktop file, thanks to Kjell Braden. (Closes: #466587)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Sun, 24 Feb 2008 23:35:44 -0300
+
+hardinfo (0.4.2.3-1) unstable; urgency=low
+
+  * New upstream release.(Closes: #454947)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Sun, 09 Dec 2007 05:03:40 -0400
+
+hardinfo (0.4.2.2-3) unstable; urgency=low
+
+  * Fixed FTBFS on s390. (Closes: #443293)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Thu, 20 Sep 2007 16:59:20 -0400
+
+hardinfo (0.4.2.2-2) unstable; urgency=low
+
+  * Fixed FTBFS. (Closes: #442594)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Mon, 17 Sep 2007 15:51:12 -0300
+
+hardinfo (0.4.2.2-1) unstable; urgency=low
+
+  * New upstream release.
+  * hardinfo now suggests mesa-utils (Closes: #435793)
+
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Tue, 11 Sep 2007 14:53:15 -0300
+
+hardinfo (0.4.2.1.svn30042007-1) unstable; urgency=low
+
+  * Fixed FTBFS on SVN version (Closes: #419587)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Mon, 30 Apr 2007 14:52:35 -0300
+
+hardinfo (0.4.2.1-1) unstable; urgency=low
+
+  * New upstream release.
+  * Fixed segfault on device entry (Closes: #387955)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Mon, 09 Apr 2007 11:45:31 -0300
+
+hardinfo (0.4.1-9) unstable; urgency=low
+
+  * Fixed segfaults on powerpc (Closes: #408050)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Wed, 21 Feb 2007 21:10:57 -0200
+
+hardinfo (0.4.1-8) unstable; urgency=low
+
+  * Fixed errors on processor.h on ia64 and alpha.
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Tue, 12 Dec 2006 09:30:53 -0300
+
+hardinfo (0.4.1-7) unstable; urgency=low
+
+  * Fixed FTBFS on s390, ia64 and alpha.
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Mon, 11 Dec 2006 20:40:14 -0200
+
+hardinfo (0.4.1-6) unstable; urgency=low
+
+  * Changed configure script to reconize m68k machines
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Sun, 10 Dec 2006 18:38:14 -0200
+
+hardinfo (0.4.1-3) unstable; urgency=low
+
+  * Changed libz path (Closes: #391963)
+  * added support to alpha arm ia64 m68k s390
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Wed, 11 Oct 2006 23:56:11 -0300
+
+hardinfo (0.4.1-2) unstable; urgency=low
+
+  * fixed debian/watch file.
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Fri, 23 Jun 2006 00:35:08 -0300
+
+hardinfo (0.4.1-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Wed, 21 Jun 2006 22:18:24 -0300
+
+hardinfo (0.4-3) unstable; urgency=low
+
+  * Updated project's homepage, old is unreachable. (Closes: #370797)
+  * upated printers.h (Closes: #370363)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Fri,  9 Jun 2006 08:51:12 -0300
+
+hardinfo (0.4-2) unstable; urgency=low
+
+  * Limited supported architectures. (Closes: #368582)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Thu, 25 May 2006 22:13:49 -0300
+
+hardinfo (0.4-1) unstable; urgency=low
+
+  * new upstream release
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Mon, 22 May 2006 19:43:53 -0300
+
+hardinfo (0.3.7pre-4) unstable; urgency=low
+
+  * added ia64 support. (Closes: #362175)
+
+ -- Agney Lopes Roth Ferraz <agney@debian.org>  Sat, 20 May 2006 16:31:36 -0300
+
+hardinfo (0.3.7pre-3) unstable; urgency=low
+
+  * added mips64 support. (Closes: #361640)
+
+ -- Agney Lopes Roth Ferraz <agney@users.sourceforge.net>  Sun,  9 Apr 2006 15:34:14 -0300
+
+hardinfo (0.3.7pre-2) unstable; urgency=low
+
+  * Fixed FTBFS (file intl.c updated). Thanks to  Andreas Jochens. (Closes: #326033)
+
+ -- Agney Lopes Roth Ferraz <agney@users.sourceforge.net>  Fri,  9 Sep 2005 18:30:09 -0300
+
+hardinfo (0.3.7pre-1) unstable; urgency=low
+
+  * New upstream release. (Closes: #280694, #300114, #233033)
+
+ -- Agney Lopes Roth Ferraz <agney@users.sourceforge.net>  Mon, 13 Jun 2005 18:34:20 -0300
+
+hardinfo (0.3.6-5) unstable; urgency=high
+
+  * Add Amd64 support (closes: #253935).
+    Thanks to Kurt Roeckx <Q@ping.be>
+  * Close duplicate "doesn't work with newer pciutils" bug (closes: #254018).
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sat, 14 Jun 2004 21:33:25 -0300
+
+hardinfo (0.3.6-4) unstable; urgency=high
+
+  * Fixed segfault on startup (closes: #242843).
+    Thanks to Remco van de Meent <remco@debian.org>
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sat, 05 Jun 2004 20:35:12 -0300
+
+hardinfo (0.3.6-3) unstable; urgency=high
+
+  * Added Debian menu entry icon.
+  * Fixed some misc packaging bugs.
+  * Changed package description.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 17 Dec 2003 10:52:45 -0300
+
+hardinfo (0.3.6-2) unstable; urgency=low
+
+  * Sync with upstream sources.
+  * Disabled "Network" tab.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 17 Dec 2003 10:31:23 -0300
+
+hardinfo (0.3.6-1) unstable; urgency=high
+
+  * Sync with upstream sources.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 18 Jul 2003 10:07:58 -0300
+
+hardinfo (0.3.5-1) unstable; urgency=high
+
+  * Sync with upstream sources.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 23 Jun 2003 15:55:22 -0300
+
+hardinfo (0.3.4-1) unstable; urgency=high
+
+  * Sync with upstream sources.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 22 Jun 2003 21:45:15 -0300
+
+hardinfo (0.3.3-1) unstable; urgency=low
+
+  * Sync with upstream sources.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 18 Jun 2003 22:15:34 -0300
+
+hardinfo (0.3.2-1) unstable; urgency=low
+
+  * Sync with upstream sources.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 17 Jun 2003 10:50:34 -0300
+
+hardinfo (0.3.1-1) unstable; urgency=low
+
+  * Sync with upstream sources.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 15 Jun 2003 21:32:14 -0300
+
+hardinfo (0.3-1) unstable; urgency=low
+
+  * Initial Release.
+
+ -- Leandro Pereira <leandro@linuxmag.com.br>  Sun, 15 Jun 2003 11:13:14 -0300
+
