@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2009 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2009 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -31,6 +31,7 @@ ProgramParameters params = { 0 };
 
 int main(int argc, char **argv)
 {
+    int exit_code = 0;
     GSList *modules;
 
     setlocale(LC_ALL, "");
@@ -46,7 +47,7 @@ int main(int argc, char **argv)
     if (params.show_version) {
         g_print("HardInfo version " VERSION "\n");
         g_print
-            (_(/*/ %d will be latest year of copyright*/ "Copyright (C) 2003-%d Leandro A. F. Pereira. See COPYING for details.\n\n"), HARDINFO_COPYRIGHT_LATEST_YEAR );
+            (_(/*/ %d will be latest year of copyright*/ "Copyright (C) 2003-%d L. A. F. Pereira. See COPYING for details.\n\n"), HARDINFO_COPYRIGHT_LATEST_YEAR );
 
 	g_print(_("Compile-time options:\n"
 		"  Release version:   %s (%s)\n"
@@ -79,7 +80,7 @@ int main(int argc, char **argv)
 	for (modules = modules_load_all(); modules;
 	     modules = modules->next) {
 	    ShellModule *module = (ShellModule *) modules->data;
-	    ModuleAbout *ma = module_get_about(module);
+	    const ModuleAbout *ma = module_get_about(module);
 	    gchar *name = g_path_get_basename(g_module_name(module->dll));
 
 	    g_print("%-20s %-15s %-12s\n", name, module->name, ma->version);
@@ -91,13 +92,17 @@ int main(int argc, char **argv)
     }
 
     if (!params.create_report && !params.run_benchmark) {
-	/* we only try to open the UI if the user didn't ask for a report. */
-	params.gui_running = ui_init(&argc, &argv);
+        /* we only try to open the UI if the user didn't ask for a report. */
+        params.gui_running = ui_init(&argc, &argv);
 
-	/* as a fallback, if GTK+ initialization failed, run in report
-	   generation mode. */
-	if (!params.gui_running)
-	    params.create_report = TRUE;
+        /* as a fallback, if GTK+ initialization failed, run in report
+           generation mode. */
+        if (!params.gui_running) {
+            params.create_report = TRUE;
+            /* ... it is possible to -f html without -r */
+            if (params.report_format != REPORT_FORMAT_HTML)
+                params.markup_ok = FALSE;
+        }
     }
 
     if (params.use_modules) {
@@ -121,7 +126,8 @@ int main(int argc, char **argv)
 
         result = module_call_method_param("benchmark::runBenchmark", params.run_benchmark);
         if (!result) {
-          g_error(_("Unknown benchmark ``%s'' or benchmark.so not loaded"), params.run_benchmark);
+          fprintf(stderr, _("Unknown benchmark ``%s'' or benchmark.so not loaded"), params.run_benchmark);
+          exit_code = 1;
         } else {
           fprintf(stderr, "\n");
           g_print("%s\n", result);
@@ -154,7 +160,10 @@ int main(int argc, char **argv)
     }
 
     moreinfo_shutdown();
+    vendor_cleanup();
+    dmidecode_cache_free();
+    free_auto_free_final();
 
     DEBUG("finished");
-    return 0;
+    return exit_code;
 }

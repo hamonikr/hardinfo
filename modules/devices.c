@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -38,9 +38,12 @@
 
 #include "devices.h"
 #include "dt_util.h"
+#include "udisks2_util.h"
+#include "pci_util.h"
 
 gchar *callback_processors();
-gchar *callback_memory();
+gchar *callback_gpu();
+gchar *callback_monitors();
 gchar *callback_battery();
 gchar *callback_pci();
 gchar *callback_sensors();
@@ -48,15 +51,15 @@ gchar *callback_printers();
 gchar *callback_storage();
 gchar *callback_input();
 gchar *callback_usb();
-#if defined(ARCH_x86) || defined(ARCH_x86_64)
 gchar *callback_dmi();
-gchar *callback_spd();
-#endif
+gchar *callback_dmi_mem();
+gchar *callback_firmware();
 gchar *callback_dtree();
 gchar *callback_device_resources();
 
 void scan_processors(gboolean reload);
-void scan_memory(gboolean reload);
+void scan_gpu(gboolean reload);
+void scan_monitors(gboolean reload);
 void scan_battery(gboolean reload);
 void scan_pci(gboolean reload);
 void scan_sensors(gboolean reload);
@@ -64,50 +67,52 @@ void scan_printers(gboolean reload);
 void scan_storage(gboolean reload);
 void scan_input(gboolean reload);
 void scan_usb(gboolean reload);
-#if defined(ARCH_x86) || defined(ARCH_x86_64)
 void scan_dmi(gboolean reload);
-void scan_spd(gboolean reload);
-#endif
+void scan_dmi_mem(gboolean reload);
+void scan_firmware(gboolean reload);
 void scan_dtree(gboolean reload);
 void scan_device_resources(gboolean reload);
 
 gboolean root_required_for_resources(void);
+gboolean spd_decode_show_hinote(const char**);
 
 gchar *hi_more_info(gchar *entry);
 
 enum {
     ENTRY_DTREE,
+    ENTRY_DMI,
     ENTRY_PROCESSOR,
-    ENTRY_MEMORY,
+    ENTRY_GPU,
+    ENTRY_MONITORS,
+    ENTRY_DMI_MEM,
     ENTRY_PCI,
     ENTRY_USB,
+    ENTRY_FW,
     ENTRY_PRINTERS,
     ENTRY_BATTERY,
     ENTRY_SENSORS,
     ENTRY_INPUT,
     ENTRY_STORAGE,
-    ENTRY_DMI,
-    ENTRY_SPD,
     ENTRY_RESOURCES
 };
 
 static ModuleEntry entries[] = {
     [ENTRY_PROCESSOR] = {N_("Processor"), "processor.png", callback_processors, scan_processors, MODULE_FLAG_NONE},
-    [ENTRY_MEMORY] = {N_("Memory"), "memory.png", callback_memory, scan_memory, MODULE_FLAG_NONE},
+    [ENTRY_GPU] = {N_("Graphics Processors"), "devices.png", callback_gpu, scan_gpu, MODULE_FLAG_NONE},
+    [ENTRY_MONITORS] = {N_("Monitors"), "monitor.png", callback_monitors, scan_monitors, MODULE_FLAG_NONE},
     [ENTRY_PCI] = {N_("PCI Devices"), "devices.png", callback_pci, scan_pci, MODULE_FLAG_NONE},
     [ENTRY_USB] = {N_("USB Devices"), "usb.png", callback_usb, scan_usb, MODULE_FLAG_NONE},
+    [ENTRY_FW] = {N_("Firmware"), "processor.png", callback_firmware, scan_firmware, MODULE_FLAG_NONE},
     [ENTRY_PRINTERS] = {N_("Printers"), "printer.png", callback_printers, scan_printers, MODULE_FLAG_NONE},
     [ENTRY_BATTERY] = {N_("Battery"), "battery.png", callback_battery, scan_battery, MODULE_FLAG_NONE},
     [ENTRY_SENSORS] = {N_("Sensors"), "therm.png", callback_sensors, scan_sensors, MODULE_FLAG_NONE},
     [ENTRY_INPUT] = {N_("Input Devices"), "inputdevices.png", callback_input, scan_input, MODULE_FLAG_NONE},
     [ENTRY_STORAGE] = {N_("Storage"), "hdd.png", callback_storage, scan_storage, MODULE_FLAG_NONE},
+    [ENTRY_DMI] = {N_("System DMI"), "computer.png", callback_dmi, scan_dmi, MODULE_FLAG_NONE},
+    [ENTRY_DMI_MEM] = {N_("Memory Devices"), "memory.png", callback_dmi_mem, scan_dmi_mem, MODULE_FLAG_NONE},
 #if defined(ARCH_x86) || defined(ARCH_x86_64)
-    [ENTRY_DMI] = {N_("DMI"), "computer.png", callback_dmi, scan_dmi, MODULE_FLAG_NONE},
-    [ENTRY_SPD] = {N_("Memory SPD"), "memory.png", callback_spd, scan_spd, MODULE_FLAG_NONE},
-    [ENTRY_DTREE] = {"#"},
+    [ENTRY_DTREE] = {N_("Device Tree"), "devices.png", callback_dtree, scan_dtree, MODULE_FLAG_HIDE},
 #else
-    [ENTRY_DMI] = {"#"},
-    [ENTRY_SPD] = {"#"},
     [ENTRY_DTREE] = {N_("Device Tree"), "devices.png", callback_dtree, scan_dtree, MODULE_FLAG_NONE},
 #endif	/* x86 or x86_64 */
     [ENTRY_RESOURCES] = {N_("Resources"), "resources.png", callback_device_resources, scan_device_resources, MODULE_FLAG_NONE},
@@ -119,12 +124,33 @@ gchar *printer_list = NULL;
 gchar *printer_icons = NULL;
 gchar *pci_list = NULL;
 gchar *input_list = NULL;
+gboolean storage_no_nvme = FALSE;
 gchar *storage_list = NULL;
 gchar *battery_list = NULL;
-gchar *meminfo = NULL;
-gchar *lginterval = NULL;
+
+/* in dmi_memory.c */
+gchar *memory_devices_get_info();
+gboolean memory_devices_hinote(const char **msg);
+gchar *memory_devices_info = NULL;
+
+/* in firmware.c */
+gchar *firmware_get_info();
+gboolean firmware_hinote(const char **msg);
+gchar *firmware_info = NULL;
+
+/* in monitors.c */
+gchar *monitors_get_info();
+gboolean monitors_hinote(const char **msg);
+gchar *monitors_info = NULL;
 
 #include <vendor.h>
+
+extern gchar *gpu_summary;
+const gchar *get_gpu_summary() {
+    if (gpu_summary == NULL)
+        scan_gpu(FALSE);
+    return gpu_summary;
+}
 
 static gint proc_cmp_model_name(Processor *a, Processor *b) {
     return g_strcmp0(a->model_name, b->model_name);
@@ -140,19 +166,27 @@ static gint proc_cmp_max_freq(Processor *a, Processor *b) {
 
 gchar *processor_describe_default(GSList * processors)
 {
-    int packs, cores, threads;
-    const gchar  *packs_fmt, *cores_fmt, *threads_fmt;
+    int packs, cores, threads, nodes;
+    const gchar  *packs_fmt, *cores_fmt, *threads_fmt, *nodes_fmt;
     gchar *ret, *full_fmt;
 
-    cpu_procs_cores_threads(&packs, &cores, &threads);
+    cpu_procs_cores_threads_nodes(&packs, &cores, &threads, &nodes);
+
+    /* NOTE: If this is changed, look at get_cpu_desc() in bench_results.c! */
 
     /* if topology info was available, else fallback to old method */
     if (cores > 0) {
         packs_fmt = ngettext("%d physical processor", "%d physical processors", packs);
         cores_fmt = ngettext("%d core", "%d cores", cores);
         threads_fmt = ngettext("%d thread", "%d threads", threads);
-        full_fmt = g_strdup_printf(_(/*/NP procs; NC cores; NT threads*/ "%s; %s; %s"), packs_fmt, cores_fmt, threads_fmt);
-        ret = g_strdup_printf(full_fmt, packs, cores, threads);
+        if (nodes > 1) {
+            nodes_fmt = ngettext("%d NUMA node", "%d NUMA nodes", nodes);
+            full_fmt = g_strdup_printf(_(/*/NP procs; NC cores across NN nodes; NT threads*/ "%s; %s across %s; %s"), packs_fmt, cores_fmt, nodes_fmt, threads_fmt);
+            ret = g_strdup_printf(full_fmt, packs, cores * nodes, nodes, threads);
+        } else {
+            full_fmt = g_strdup_printf(_(/*/NP procs; NC cores; NT threads*/ "%s; %s; %s"), packs_fmt, cores_fmt, threads_fmt);
+            ret = g_strdup_printf(full_fmt, packs, cores, threads);
+        }
         g_free(full_fmt);
         return ret;
     } else {
@@ -246,6 +280,44 @@ gchar *get_processor_name_and_desc(void)
     return nd;
 }
 
+gchar *get_storage_devices_simple(void)
+{
+    scan_storage(FALSE);
+
+    struct Info *info = info_unflatten(storage_list);
+    if (!info) {
+        return "";
+    }
+
+    int i, fi;
+    struct InfoGroup *group;
+    struct InfoField *field;
+    gchar *storage_devs = NULL, *tmp;
+    const gchar *dev_label, *model_wo_tags;
+
+    GRegex *regex;
+    regex = g_regex_new ("<.*>", 0, 0, NULL);
+
+    for (i = 0; i < info->groups->len; i++) {
+        group = &g_array_index(info->groups, struct InfoGroup, info->groups->len - 1);
+        if (!group)
+            continue;
+
+        info_group_strip_extra(group);
+        for (fi = 0; fi < group->fields->len; fi++) {
+            field = &g_array_index(group->fields, struct InfoField, fi);
+            if (!field->value)
+                continue;
+
+            tmp = g_regex_replace(regex, field->value, -1, 0, "", 0, NULL); // remove html tags
+            storage_devs = h_strdup_cprintf("%s\n", storage_devs, g_strchug(tmp));
+            g_free(tmp);
+        }
+    }
+    g_free(info);
+
+    return storage_devs;
+}
 
 gchar *get_storage_devices(void)
 {
@@ -336,59 +408,138 @@ gchar *get_processor_max_frequency(void)
     }
 }
 
-gchar *get_pci_device_description(gchar *pci_id)
-{
-    gchar *description;
-
-    if (!_pci_devices) {
-        scan_pci(FALSE);
-    }
-
-    if ((description = g_hash_table_lookup(_pci_devices, pci_id))) {
-        return g_strdup(description);
-    }
-
-    return NULL;
-}
-
-gchar *get_memory_total(void)
-{
-    scan_memory(FALSE);
-    return moreinfo_lookup ("DEV:MemTotal");
-}
-
 gchar *get_motherboard(void)
 {
-    char *board_name, *board_vendor, *system_version;
-    char *ret;
+    gchar *board_name, *board_vendor, *board_version;
+    gchar *product_name, *product_vendor, *product_version;
+    gchar *board_part = NULL, *product_part = NULL;
+    const gchar *tmp;
+    int b = 0, p = 0;
+
+    gchar *ret;
 
 #if defined(ARCH_x86) || defined(ARCH_x86_64)
     scan_dmi(FALSE);
 
     board_name = dmi_get_str("baseboard-product-name");
-    if (board_name == NULL)
-        board_name = dmi_get_str("system-product-name");
-
+    board_version = dmi_get_str("baseboard-version");
     board_vendor = dmi_get_str("baseboard-manufacturer");
-    if (board_vendor == NULL)
-        board_vendor = dmi_get_str("system-manufacturer");
+    if (board_vendor) {
+        /* attempt to shorten */
+        tmp = vendor_get_shortest_name(board_vendor);
+        if (tmp && tmp != board_vendor) {
+            g_free(board_vendor);
+            board_vendor = g_strdup(tmp);
+        }
+    }
 
-    system_version = dmi_get_str("system-version");
+    product_name = dmi_get_str("system-product-name");
+    product_version = dmi_get_str("system-version");
+    product_vendor = dmi_get_str("system-manufacturer");
+    if (product_vendor) {
+        /* attempt to shorten */
+        tmp = vendor_get_shortest_name(product_vendor);
+        if (tmp && tmp != product_vendor) {
+            g_free(product_vendor);
+            product_vendor = g_strdup(tmp);
+        }
+    }
 
-    if (board_name && board_vendor && system_version)
-        ret = g_strdup_printf("%s / %s (%s)", system_version, board_name, board_vendor);
-    else if (board_name && board_vendor)
-        ret = g_strconcat(board_vendor, " ", board_name, NULL);
-    else if (board_name)
-        ret = g_strdup(board_name);
-    else if (board_vendor)
-        ret = g_strdup(board_vendor);
+    if (board_vendor && product_vendor &&
+        strcmp(board_vendor, product_vendor) == 0) {
+            /* ignore duplicate vendor */
+            g_free(product_vendor);
+            product_vendor = NULL;
+    }
+
+    if (board_name && product_name &&
+        strcmp(board_name, product_name) == 0) {
+            /* ignore duplicate name */
+            g_free(product_name);
+            product_name = NULL;
+    }
+
+    if (board_version && product_version &&
+        strcmp(board_version, product_version) == 0) {
+            /* ignore duplicate version */
+            g_free(product_version);
+            product_version = NULL;
+    }
+
+    if (board_name) b += 1;
+    if (board_vendor) b += 2;
+    if (board_version) b += 4;
+
+    switch(b) {
+        case 1: /* only name */
+            board_part = g_strdup(board_name);
+            break;
+        case 2: /* only vendor */
+            board_part = g_strdup(board_vendor);
+            break;
+        case 3: /* only name and vendor */
+            board_part = g_strdup_printf("%s %s", board_vendor, board_name);
+            break;
+        case 4: /* only version? Seems unlikely */
+            board_part = g_strdup(board_version);
+            break;
+        case 5: /* only name and version? */
+            board_part = g_strdup_printf("%s %s", board_name, board_version);
+            break;
+        case 6: /* only vendor and version (like lpereira's Thinkpad) */
+            board_part = g_strdup_printf("%s %s", board_vendor, board_version);
+            break;
+        case 7: /* all */
+            board_part = g_strdup_printf("%s %s %s", board_vendor, board_name, board_version);
+            break;
+    }
+
+    if (product_name) p += 1;
+    if (product_vendor) p += 2;
+    if (product_version) p += 4;
+
+    switch(p) {
+        case 1: /* only name */
+            product_part = g_strdup(product_name);
+            break;
+        case 2: /* only vendor */
+            product_part = g_strdup(product_vendor);
+            break;
+        case 3: /* only name and vendor */
+            product_part = g_strdup_printf("%s %s", product_vendor, product_name);
+            break;
+        case 4: /* only version? Seems unlikely */
+            product_part = g_strdup(product_version);
+            break;
+        case 5: /* only name and version? */
+            product_part = g_strdup_printf("%s %s", product_name, product_version);
+            break;
+        case 6: /* only vendor and version? */
+            product_part = g_strdup_printf("%s %s", product_vendor, product_version);
+            break;
+        case 7: /* all */
+            product_part = g_strdup_printf("%s %s %s", product_vendor, product_name, product_version);
+            break;
+    }
+
+    if (board_part && product_part) {
+        ret = g_strdup_printf("%s (%s)", board_part, product_part);
+        g_free(board_part);
+        g_free(product_part);
+    } else if (board_part)
+        ret = board_part;
+    else if (product_part)
+        ret = product_part;
     else
         ret = g_strdup(_("(Unknown)"));
 
-    free(board_name);
-    free(board_vendor);
-    free(system_version);
+    g_free(board_name);
+    g_free(board_vendor);
+    g_free(board_version);
+    g_free(product_name);
+    g_free(product_vendor);
+    g_free(product_version);
+
     return ret;
 #endif
 
@@ -400,22 +551,22 @@ gchar *get_motherboard(void)
     return g_strdup(_("Unknown"));
 }
 
-ShellModuleMethod *hi_exported_methods(void)
+const ShellModuleMethod *hi_exported_methods(void)
 {
-    static ShellModuleMethod m[] = {
-	{"getProcessorCount", get_processor_count},
-	{"getProcessorName", get_processor_name},
-	{"getProcessorDesc", get_processor_desc},
-	{"getProcessorNameAndDesc", get_processor_name_and_desc},
-	{"getProcessorFrequency", get_processor_max_frequency},
-	{"getProcessorFrequencyDesc", get_processor_frequency_desc},
-	{"getMemoryTotal", get_memory_total},
-	{"getStorageDevices", get_storage_devices},
-	{"getPrinters", get_printers},
-	{"getInputDevices", get_input_devices},
-	{"getPCIDeviceDescription", get_pci_device_description},
-	{"getMotherboard", get_motherboard},
-	{NULL}
+    static const ShellModuleMethod m[] = {
+        {"getProcessorCount", get_processor_count},
+        {"getProcessorName", get_processor_name},
+        {"getProcessorDesc", get_processor_desc},
+        {"getProcessorNameAndDesc", get_processor_name_and_desc},
+        {"getProcessorFrequency", get_processor_max_frequency},
+        {"getProcessorFrequencyDesc", get_processor_frequency_desc},
+        {"getStorageDevices", get_storage_devices},
+        {"getStorageDevicesSimple", get_storage_devices_simple},
+        {"getPrinters", get_printers},
+        {"getInputDevices", get_input_devices},
+        {"getMotherboard", get_motherboard},
+        {"getGPUList", get_gpu_summary},
+        {NULL},
     };
 
     return m;
@@ -434,14 +585,12 @@ gchar *hi_more_info(gchar * entry)
 gchar *hi_get_field(gchar * field)
 {
     gchar *info = moreinfo_lookup_with_prefix("DEV", field);
-
     if (info)
-	return g_strdup(info);
+        return g_strdup(info);
 
     return g_strdup(field);
 }
 
-#if defined(ARCH_x86) || defined(ARCH_x86_64)
 void scan_dmi(gboolean reload)
 {
     SCAN_START();
@@ -449,13 +598,32 @@ void scan_dmi(gboolean reload)
     SCAN_END();
 }
 
-void scan_spd(gboolean reload)
+void scan_dmi_mem(gboolean reload)
 {
     SCAN_START();
-    scan_spd_do();
+    if (memory_devices_info)
+        g_free(memory_devices_info);
+    memory_devices_info = memory_devices_get_info();
     SCAN_END();
 }
-#endif
+
+void scan_monitors(gboolean reload)
+{
+    SCAN_START();
+    if (monitors_info)
+        g_free(monitors_info);
+    monitors_info = monitors_get_info();
+    SCAN_END();
+}
+
+void scan_firmware(gboolean reload)
+{
+    SCAN_START();
+    if (firmware_info)
+        g_free(firmware_info);
+    firmware_info = firmware_get_info();
+    SCAN_END();
+}
 
 void scan_dtree(gboolean reload)
 {
@@ -472,17 +640,17 @@ void scan_processors(gboolean reload)
     SCAN_END();
 }
 
-void scan_memory(gboolean reload)
-{
-    SCAN_START();
-    scan_memory_do();
-    SCAN_END();
-}
-
 void scan_battery(gboolean reload)
 {
     SCAN_START();
     scan_battery_do();
+    SCAN_END();
+}
+
+void scan_gpu(gboolean reload)
+{
+    SCAN_START();
+    scan_gpu_do();
     SCAN_END();
 }
 
@@ -512,9 +680,12 @@ void scan_storage(gboolean reload)
     SCAN_START();
     g_free(storage_list);
     storage_list = g_strdup("");
-
-    __scan_ide_devices();
-    __scan_scsi_devices();
+    storage_no_nvme = FALSE;
+    if (!__scan_udisks2_devices()) {
+        storage_no_nvme = TRUE;
+        __scan_ide_devices();
+        __scan_scsi_devices();
+    }
     SCAN_END();
 }
 
@@ -537,17 +708,28 @@ gchar *callback_processors()
     return processor_get_info(processors);
 }
 
-#if defined(ARCH_x86) || defined(ARCH_x86_64)
 gchar *callback_dmi()
 {
-    return g_strdup(dmi_info);
+    return g_strdup_printf("%s"
+                           "[$ShellParam$]\n"
+                           "ViewType=5\n",
+                           dmi_info);
 }
 
-gchar *callback_spd()
+gchar *callback_dmi_mem()
 {
-    return g_strdup(spd_info);
+    return g_strdup(memory_devices_info);
 }
-#endif
+
+gchar *callback_monitors()
+{
+    return g_strdup(monitors_info);
+}
+
+gchar *callback_firmware()
+{
+    return g_strdup(firmware_info);
+}
 
 gchar *callback_dtree()
 {
@@ -556,41 +738,27 @@ gchar *callback_dtree()
         "ViewType=1\n", dtree_info);
 }
 
-gchar *callback_memory()
-{
-    return g_strdup_printf("[Memory]\n"
-               "%s\n"
-               "[$ShellParam$]\n"
-               "ViewType=2\n"
-               "LoadGraphSuffix= kB\n"
-               "RescanInterval=2000\n"
-               "ColumnTitle$TextValue=%s\n"
-               "ColumnTitle$Extra1=%s\n"
-               "ColumnTitle$Value=%s\n"
-               "ShowColumnHeaders=true\n"
-               "%s\n", meminfo,
-               _("Field"), _("Description"), _("Value"), /* column labels */
-               lginterval);
-}
-
 gchar *callback_battery()
 {
     return g_strdup_printf("%s\n"
 			   "[$ShellParam$]\n"
+			   "ViewType=5\n"
 			   "ReloadInterval=4000\n", battery_list);
 }
 
 gchar *callback_pci()
 {
-    return g_strdup_printf("[PCI Devices]\n"
-			   "%s"
-			   "[$ShellParam$]\n" "ViewType=1\n", pci_list);
+    return g_strdup(pci_list);
+}
+
+gchar *callback_gpu()
+{
+    return g_strdup(gpu_list);
 }
 
 gchar *callback_sensors()
 {
-    return g_strdup_printf("[Sensors]\n"
-                           "%s\n"
+    return g_strdup_printf("%s\n"
                            "[$ShellParam$]\n"
                            "ViewType=2\n"
                            "LoadGraphSuffix=\n"
@@ -599,10 +767,13 @@ gchar *callback_sensors()
                            "ColumnTitle$Extra1=%s\n"
                            "ShowColumnHeaders=true\n"
                            "RescanInterval=5000\n"
+                           "%s\n"
                            "%s",
                            sensors,
-                           _("Sensor"), _("Value"), _("Type"), /* column labels */
-                           lginterval);
+                           _("Sensor"), _("Value"),
+                                SENSORS_GROUP_BY_TYPE ? _("Driver"): _("Type"),
+                           lginterval,
+                           sensor_icons);
 }
 
 gchar *callback_printers()
@@ -617,27 +788,37 @@ gchar *callback_printers()
 gchar *callback_storage()
 {
     return g_strdup_printf("%s\n"
-			   "[$ShellParam$]\n"
-			   "ReloadInterval=5000\n"
-			   "ViewType=1\n%s", storage_list, storage_icons);
+        "[$ShellParam$]\n"
+        "ReloadInterval=5000\n"
+        "ColumnTitle$TextValue=%s\n"
+        "ColumnTitle$Value=%s\n"
+        "ColumnTitle$Extra1=%s\n"
+        "ShowColumnHeaders=true\n"
+        "ViewType=1\n%s", storage_list, _("Device"), _("Size"), _("Model"), storage_icons);
 }
 
 gchar *callback_input()
 {
     return g_strdup_printf("[Input Devices]\n"
-			   "%s"
-			   "[$ShellParam$]\n"
-			   "ViewType=1\n"
-			   "ReloadInterval=5000\n%s", input_list,
-			   input_icons);
+                           "%s"
+                           "[$ShellParam$]\n"
+                           "ViewType=1\n"
+                           "ColumnTitle$TextValue=%s\n"
+                           "ColumnTitle$Value=%s\n"
+                           "ColumnTitle$Extra1=%s\n"
+                           "ShowColumnHeaders=true\n"
+                           "ReloadInterval=5000\n%s",
+                           input_list, _("Device"), _("Vendor"), _("Type"),
+                           input_icons);
 }
 
 gchar *callback_usb()
 {
     return g_strdup_printf("%s"
-			   "[$ShellParam$]\n"
-			   "ViewType=1\n"
-			   "ReloadInterval=5000\n", usb_list);
+               "[$ShellParam$]\n"
+               "ViewType=1\n"
+               "ReloadInterval=5000\n%s", usb_list, usb_icons);
+
 }
 
 ModuleEntry *hi_module_get_entries(void)
@@ -657,54 +838,68 @@ guchar hi_module_get_weight(void)
 
 void hi_module_init(void)
 {
-    if (!g_file_test("/usr/share/misc/pci.ids", G_FILE_TEST_EXISTS)) {
-        static SyncEntry se = {
-             .fancy_name = N_("Update PCI ID listing"),
-             .name = "GetPCIIds",
-             .save_to = "pci.ids",
-             .get_data = NULL
-        };
+    static SyncEntry entries[] = {
+        {
+            .name = N_("Update PCI ID listing"),
+            .file_name = "pci.ids",
+        },
+        {
+            .name = N_("Update USB ID listing"),
+            .file_name = "usb.ids",
+        },
+        {
+            .name = N_("Update EDID vendor codes"),
+            .file_name = "edid.ids",
+        },
+        {
+            .name = N_("Update IEEE OUI vendor codes"),
+            .file_name = "ieee_oui.ids",
+        },
+        {
+            .name = N_("Update SD card manufacturer information"),
+            .file_name = "sdcard.ids",
+        },
+#ifdef ARCH_x86
+        {
+            .name = N_("Update CPU flags database"),
+            .file_name = "cpuflags.json",
+        },
+#endif
+    };
+    gint i;
 
-        sync_manager_add_entry(&se);
-    }
+    for (i = 0; i < G_N_ELEMENTS(entries); i++)
+        sync_manager_add_entry(&entries[i]);
 
-#if defined(ARCH_x86) || defined(ARCH_x86_64)
-    {
-      static SyncEntry se = {
-        .fancy_name = N_("Update CPU feature database"),
-        .name = "RecvCPUFlags",
-        .save_to = "cpuflags.conf",
-        .get_data = NULL
-      };
-
-      sync_manager_add_entry(&se);
-    }
-#endif	/* defined(ARCH_x86) */
-
-    init_memory_labels();
     init_cups();
-    sensors_init();
+    sensor_init();
+    udisks2_init();
+
+#ifdef ARCH_x86
+    void cpuflags_x86_init(void);
+    cpuflags_x86_init();
+#endif
 }
 
 void hi_module_deinit(void)
 {
     moreinfo_del_with_prefix("DEV");
-    sensors_shutdown();
-    g_hash_table_destroy(memlabels);
+    sensor_shutdown();
+    storage_shutdown();
+    udisks2_shutdown();
     g_module_close(cups);
 }
 
-ModuleAbout *hi_module_get_about(void)
+const ModuleAbout *hi_module_get_about(void)
 {
-    static ModuleAbout ma[] = {
-	{
-	 .author = "Leandro A. F. Pereira",
-	 .description = N_("Gathers information about hardware devices"),
-	 .version = VERSION,
-	 .license = "GNU GPL version 2"}
+    const static ModuleAbout ma = {
+        .author = "L. A. F. Pereira",
+        .description = N_("Gathers information about hardware devices"),
+        .version = VERSION,
+        .license = "GNU GPL version 2",
     };
 
-    return ma;
+    return &ma;
 }
 
 gchar **hi_module_get_dependencies(void)
@@ -716,9 +911,38 @@ gchar **hi_module_get_dependencies(void)
 
 const gchar *hi_note_func(gint entry)
 {
+    if (entry == ENTRY_PCI
+        || entry == ENTRY_GPU) {
+            const gchar *ids = find_pci_ids_file();
+            if (!ids) {
+                return g_strdup(_("A copy of <i><b>pci.ids</b></i> is not available on the system."));
+            }
+            if (ids && strstr(ids, ".min")) {
+                return g_strdup(_("A full <i><b>pci.ids</b></i> is not available on the system."));
+            }
+    }
     if (entry == ENTRY_RESOURCES) {
         if (root_required_for_resources()) {
             return g_strdup(_("Resource information requires superuser privileges"));
+        }
+    }
+    else if (entry == ENTRY_STORAGE){
+        if (storage_no_nvme) {
+            return g_strdup(
+                _("Any NVMe storage devices present are not listed.\n"
+                  "<b><i>udisksd</i></b> is required for NVMe devices."));
+        }
+    }
+    else if (entry == ENTRY_DMI_MEM){
+        const char *msg;
+        if (memory_devices_hinote(&msg)) {
+            return msg;
+        }
+    }
+    else if (entry == ENTRY_FW) {
+        const char *msg;
+        if (firmware_hinote(&msg)) {
+            return msg;
         }
     }
     return NULL;

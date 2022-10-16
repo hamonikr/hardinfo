@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2009 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2009 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -39,12 +39,12 @@ void cb_sync_manager()
 
 void cb_open_web_page()
 {
-    open_url("http://www.hardinfo.org");
+    uri_open("http://www.hardinfo.org");
 }
 
 void cb_report_bug()
 {
-    open_url("https://github.com/lpereira/hardinfo");
+    uri_open("https://github.com/lpereira/hardinfo");
 }
 
 void cb_refresh()
@@ -95,7 +95,7 @@ void cb_about_module(GtkAction * action)
 {
     Shell *shell = shell_get_main_shell();
     GSList *modules = shell->tree->modules;
-    ModuleAbout *ma;
+    const ModuleAbout *ma;
     gchar *name;
 
     g_object_get(G_OBJECT(action), "tooltip", &name, NULL);
@@ -156,12 +156,13 @@ void cb_about()
     gchar *copyright = NULL;
     const gchar *authors[] = {
         _("Author:"),
-        "Leandro A. F. Pereira",
+        "L. A. F. Pereira",
         "",
         _("Contributors:"),
         "Agney Lopes Roth Ferraz",
         "Andrey Esin",
         "Burt P.",
+        "Ondrej Čerman",
         "",
         _("Based on work by:"),
         _("MD5 implementation by Colin Plumb (see md5.c for details)"),
@@ -180,6 +181,7 @@ void cb_about()
         _("Tango Project"),
         _("The GNOME Project"),
         _("VMWare, Inc. (USB icon from VMWare Workstation 6)"),
+        _("epicbard (Fan icon, CC BY-SA 3.0)"),
         NULL
     };
 
@@ -192,14 +194,14 @@ void cb_about()
     gtk_about_dialog_set_name(GTK_ABOUT_DIALOG(about), "HardInfo");
 #endif
 
-    copyright = g_strdup_printf("Copyright \302\251 2003-%d Leandro A. F. Pereira", HARDINFO_COPYRIGHT_LATEST_YEAR);
+    copyright = g_strdup_printf("Copyright \302\251 2003-%d L. A. F. Pereira", HARDINFO_COPYRIGHT_LATEST_YEAR);
 
     gtk_about_dialog_set_version(GTK_ABOUT_DIALOG(about), VERSION);
     gtk_about_dialog_set_copyright(GTK_ABOUT_DIALOG(about), copyright);
     gtk_about_dialog_set_comments(GTK_ABOUT_DIALOG(about),
 				  _("System information and benchmark tool"));
     gtk_about_dialog_set_logo(GTK_ABOUT_DIALOG(about),
-			      icon_cache_get_pixbuf("logo.png"));
+			      icon_cache_get_pixbuf("hardinfo.png"));
 
     gtk_about_dialog_set_license(GTK_ABOUT_DIALOG(about),
 				 _("HardInfo is free software; you can redistribute it and/or modify "

@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2006 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2006 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -19,7 +19,7 @@
 #include "hardinfo.h"
 #include "devices.h"
 #include "cpu_util.h"
-
+#include "nice_name.h"
 #include "x86_data.h"
 #include "x86_data.c"
 
@@ -275,7 +275,7 @@ gchar *clocks_summary(GSList * processors)
     /* create list of all clock references */
     for (l = processors; l; l = l->next) {
         p = (Processor*)l->data;
-        if (p->cpufreq) {
+        if (p->cpufreq && p->cpufreq->cpukhz_max > 0) {
             all_clocks = g_slist_prepend(all_clocks, p->cpufreq);
         }
     }
@@ -448,14 +448,15 @@ gchar *caches_summary(GSList * processors)
     return ret;
 }
 
-#define PROC_SCAN_READ_BUFFER_SIZE 896
+#define PROC_SCAN_READ_BUFFER_SIZE 1024
 GSList *processor_scan(void)
 {
     GSList *procs = NULL, *l = NULL;
     Processor *processor = NULL;
     FILE *cpuinfo;
-    gchar buffer[PROC_SCAN_READ_BUFFER_SIZE];
+    gchar *buffer;
 
+    buffer = g_malloc(PROC_SCAN_READ_BUFFER_SIZE);
     cpuinfo = fopen(PROC_CPUINFO, "r");
     if (!cpuinfo)
         return NULL;
@@ -513,6 +514,7 @@ GSList *processor_scan(void)
     }
 
     fclose(cpuinfo);
+    g_free(buffer);
 
     /* finish last */
     if (processor)
@@ -567,6 +569,8 @@ GSList *processor_scan(void)
 
         if (processor->cpufreq->cpukhz_max)
             processor->cpu_mhz = processor->cpufreq->cpukhz_max / 1000;
+
+        nice_name_x86_cpuid_model_string(processor->model_name);
     }
 
     return procs;
@@ -624,7 +628,7 @@ gchar *processor_get_detailed_info(Processor * processor)
     ret = g_strdup_printf("[%s]\n"
                        "%s=%s\n"
                        "%s=%d, %d, %d (%s)\n" /* family, model, stepping (decoded name) */
-                       "%s=%s\n"      /* vendor */
+                       "$^$%s=%s\n"      /* vendor */
                        "%s=%s\n"      /* microcode */
                        "[%s]\n"       /* configuration */
                        "%s=%d %s\n"   /* cache size (from cpuinfo) */
@@ -648,7 +652,7 @@ gchar *processor_get_detailed_info(Processor * processor)
                    processor->model,
                    processor->stepping,
                    processor->strmodel,
-                   _("Vendor"), vendor_get_name(processor->vendor_id),
+                   _("Vendor"), processor->vendor_id,
                    _("Microcode Version"), processor->microcode,
                    _("Configuration"),
                    _("Cache Size"), processor->cache_size, _("kb"),
@@ -678,12 +682,62 @@ gchar *processor_describe(GSList * processors) {
     return processor_describe_default(processors);
 }
 
+gchar *dmi_socket_info() {
+    gchar *ret;
+    dmi_type dt = 4;
+    int i;
+    dmi_handle_list *hl = dmidecode_handles(&dt);
+
+    if (!hl) {
+        ret = g_strdup_printf("[%s]\n%s=%s\n",
+                _("Socket Information"), _("Result"),
+                (getuid() == 0)
+                ? _("(Not available)")
+                : _("(Not available; Perhaps try running HardInfo as root.)") );
+    } else {
+        ret = g_strdup("");
+        for(i = 0; i < hl->count; i++) {
+            dmi_handle h = hl->handles[i];
+            gchar *upgrade = dmidecode_match("Upgrade", &dt, &h);
+            gchar *socket = dmidecode_match("Socket Designation", &dt, &h);
+            gchar *bus_clock_str = dmidecode_match("External Clock", &dt, &h);
+            gchar *voltage_str = dmidecode_match("Voltage", &dt, &h);
+            gchar *max_speed_str = dmidecode_match("Max Speed", &dt, &h);
+
+            ret = h_strdup_cprintf("[%s (%d) %s]\n"
+                            "%s=0x%x\n"
+                            "%s=%s\n"
+                            "%s=%s\n"
+                            "%s=%s\n"
+                            "%s=%s\n",
+                            ret,
+                            _("CPU Socket"), i, socket,
+                            _("DMI Handle"), h,
+                            _("Type"), upgrade,
+                            _("Voltage"), voltage_str,
+                            _("External Clock"), bus_clock_str,
+                            _("Max Frequency"), max_speed_str
+                            );
+            g_free(upgrade);
+            g_free(socket);
+            g_free(bus_clock_str);
+            g_free(voltage_str);
+            g_free(max_speed_str);
+        }
+
+        dmi_handle_list_free(hl);
+    }
+
+    return ret;
+}
+
 gchar *processor_meta(GSList * processors) {
     gchar *meta_cpu_name = processor_name(processors);
     gchar *meta_cpu_desc = processor_describe(processors);
     gchar *meta_freq_desc = processor_frequency_desc(processors);
     gchar *meta_clocks = clocks_summary(processors);
     gchar *meta_caches = caches_summary(processors);
+    gchar *meta_dmi = dmi_socket_info();
     gchar *ret = NULL;
     UNKIFNULL(meta_cpu_desc);
     ret = g_strdup_printf("[%s]\n"
@@ -691,13 +745,15 @@ gchar *processor_meta(GSList * processors) {
                         "%s=%s\n"
                         "%s=%s\n"
                         "%s"
+                        "%s"
                         "%s",
                         _("Package Information"),
                         _("Name"), meta_cpu_name,
                         _("Topology"), meta_cpu_desc,
                         _("Logical CPU Config"), meta_freq_desc,
                         meta_clocks,
-                        meta_caches);
+                        meta_caches,
+                        meta_dmi);
     g_free(meta_cpu_desc);
     g_free(meta_freq_desc);
     g_free(meta_clocks);
@@ -711,8 +767,9 @@ gchar *processor_get_info(GSList * processors)
     gchar *ret, *tmp, *hashkey;
     gchar *meta; /* becomes owned by more_info? no need to free? */
     GSList *l;
+    gchar *icons=g_strdup("");
 
-    tmp = g_strdup_printf("$CPU_META$%s=\n", _("Package Information") );
+    tmp = g_strdup_printf("$!CPU_META$%s=|Summary\n", "all");
 
     meta = processor_meta(processors);
     moreinfo_add_with_prefix("DEV", "CPU_META", meta);
@@ -720,27 +777,46 @@ gchar *processor_get_info(GSList * processors)
     for (l = processors; l; l = l->next) {
         processor = (Processor *) l->data;
 
-        tmp = g_strdup_printf("%s$CPU%d$%s=%.2f %s|%d:%d|%d\n",
+        gchar *model_name = g_strdup(processor->model_name);
+        const Vendor *v = vendor_match(processor->vendor_id, NULL);
+        if (v)
+            tag_vendor(&model_name, 0, v->name_short ? v->name_short : v->name, v->ansi_color, params.fmt_opts);
+
+        // bp: not convinced it looks good, but here's how it would be done...
+        //icons = h_strdup_cprintf("Icon$CPU%d$cpu%d=processor.png\n", icons, processor->id, processor->id);
+
+        tmp = g_strdup_printf("%s$CPU%d$cpu%d=%.2f %s|%s|%d:%d\n",
                   tmp, processor->id,
-                  processor->model_name,
+                  processor->id,
                   processor->cpu_mhz, _("MHz"),
+                  model_name,
                   processor->cputopo->socket_id,
-                  processor->cputopo->core_id,
-                  processor->cputopo->id );
+                  processor->cputopo->core_id);
 
         hashkey = g_strdup_printf("CPU%d", processor->id);
         moreinfo_add_with_prefix("DEV", hashkey,
                 processor_get_detailed_info(processor));
         g_free(hashkey);
+        g_free(model_name);
     }
 
     ret = g_strdup_printf("[$ShellParam$]\n"
                   "ViewType=1\n"
+                  "ColumnTitle$TextValue=%s\n"
+                  "ColumnTitle$Value=%s\n"
                   "ColumnTitle$Extra1=%s\n"
                   "ColumnTitle$Extra2=%s\n"
+                  "ShowColumnHeaders=true\n"
+                  "%s"
                   "[Processors]\n"
-                  "%s", _("Socket:Core"), _("Thread" /*TODO: +s*/), tmp);
+                  "%s", _("Device"), _("Frequency"), _("Model"), _("Socket:Core"), icons, tmp);
     g_free(tmp);
+    g_free(icons);
+
+    // now here's something fun...
+    struct Info *i = info_unflatten(ret);
+    g_free(ret);
+    ret = info_flatten(i);
 
     return ret;
 }

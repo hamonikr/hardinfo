@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -21,17 +21,15 @@
 
 #include <gtk/gtk.h>
 
-typedef struct _SyncEntry	SyncEntry;
+typedef struct _SyncEntry SyncEntry;
 
 struct _SyncEntry {
-  gchar *name;
-  gchar	*fancy_name;
-  gchar	*save_to;
+    const gchar *name;
+    const gchar *file_name;
 
-  gchar	*(*get_data)(void);
-  void   (*callback)(SyncEntry *entry, const gchar *response);
-  
-  gboolean selected;
+    gchar *(*generate_contents_for_upload)(gsize *size);
+
+    gboolean selected;
 };
 
 void sync_manager_add_entry(SyncEntry *entry);
@@ -39,4 +37,4 @@ void sync_manager_clear_entries(void);
 void sync_manager_show(GtkWidget *parent);
 gint sync_manager_count_entries(void);
 
-#endif	/* __SYNCMANAGER_H__ */
+#endif /* __SYNCMANAGER_H__ */

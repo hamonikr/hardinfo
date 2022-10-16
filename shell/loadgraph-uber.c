@@ -1,7 +1,7 @@
 /*
  * Christian Hergert's uber-graph (GPL3)
  * wrapped in an interface compatible with
- * Leandro A. F. Pereira's loadgraph (GPL2.1).
+ * L. A. F. Pereira's loadgraph (GPL2.1).
  */
 
 #include <string.h>
@@ -75,6 +75,10 @@ GtkWidget *load_graph_get_framed(LoadGraph * lg)
     return NULL;
 }
 
+void load_graph_set_title(LoadGraph * lg, const gchar *title)
+{
+}
+
 void load_graph_clear(LoadGraph * lg)
 {
     int i;
@@ -82,7 +86,7 @@ void load_graph_clear(LoadGraph * lg)
         for (i = 0; i < LG_MAX_LINES; i++) {
             lg->cur_value[i] = UBER_LINE_GRAPH_NO_VALUE;
         }
-        uber_graph_scale_changed(lg->uber_widget);
+        uber_graph_scale_changed(UBER_GRAPH(lg->uber_widget));
     }
 }
 

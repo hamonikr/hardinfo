@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2009 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2009 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -108,7 +108,7 @@ static double test_icons(GtkWindow *window)
   gc = gdk_gc_new(GDK_DRAWABLE(gdk_window));
   timer = g_timer_new();
   
-  pixbufs[0] = icon_cache_get_pixbuf("logo.png");
+  pixbufs[0] = icon_cache_get_pixbuf("hardinfo.png");
   pixbufs[1] = icon_cache_get_pixbuf("syncmanager.png");
   pixbufs[2] = icon_cache_get_pixbuf("report-large.png");
   

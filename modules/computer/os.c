@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2006 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2006 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -21,6 +21,7 @@
 #include <sys/utsname.h>
 #include "hardinfo.h"
 #include "computer.h"
+#include "distro_flavors.h"
 
 static gchar *
 get_libc_version(void)
@@ -46,7 +47,7 @@ get_libc_version(void)
         gboolean spawned;
         gchar *out, *err, *p;
 
-        spawned = g_spawn_command_line_sync(libs[i].test_cmd,
+        spawned = hardinfo_spawn_command_line_sync(libs[i].test_cmd,
             &out, &err, NULL, NULL);
         if (!spawned)
             continue;
@@ -91,7 +92,7 @@ static gchar *detect_kde_version(void)
         cmd = "kcontrol --version";
     }
 
-    spawned = g_spawn_command_line_sync(cmd, &out, NULL, NULL, NULL);
+    spawned = hardinfo_spawn_command_line_sync(cmd, &out, NULL, NULL, NULL);
     if (!spawned)
         return NULL;
 
@@ -106,7 +107,7 @@ detect_gnome_version(void)
     gchar *out;
     gboolean spawned;
 
-    spawned = g_spawn_command_line_sync(
+    spawned = hardinfo_spawn_command_line_sync(
         "gnome-shell --version", &out, NULL, NULL, NULL);
     if (spawned) {
         tmp = strstr(idle_free(out), _("GNOME Shell "));
@@ -117,7 +118,7 @@ detect_gnome_version(void)
         }
     }
 
-    spawned = g_spawn_command_line_sync(
+    spawned = hardinfo_spawn_command_line_sync(
         "gnome-about --gnome-version", &out, NULL, NULL, NULL);
     if (spawned) {
         tmp = strstr(idle_free(out), _("Version: "));
@@ -125,6 +126,28 @@ detect_gnome_version(void)
         if (tmp) {
             tmp += strlen(_("Version: "));
             return g_strdup_printf("GNOME %s", strend(tmp, '\n'));
+        }
+    }
+
+    return NULL;
+}
+
+
+static gchar *
+detect_mate_version(void)
+{
+    gchar *tmp;
+    gchar *out;
+    gboolean spawned;
+
+    spawned = hardinfo_spawn_command_line_sync(
+        "mate-about --version", &out, NULL, NULL, NULL);
+    if (spawned) {
+        tmp = strstr(idle_free(out), _("MATE Desktop Environment "));
+
+        if (tmp) {
+            tmp += strlen(_("MATE Desktop Environment "));
+            return g_strdup_printf("MATE %s", strend(tmp, '\n'));
         }
     }
 
@@ -192,6 +215,12 @@ detect_xdg_environment(const gchar *env_var)
         if (maybe_kde)
             return maybe_kde;
     }
+    if (g_str_equal(tmp, "MATE") || g_str_equal(tmp, "mate")) {
+        gchar *maybe_mate = detect_mate_version();
+
+        if (maybe_mate)
+            return maybe_mate;
+    }
 
     return g_strdup(tmp);
 }
@@ -232,6 +261,44 @@ detect_desktop_environment(void)
         return g_strdup(_("Terminal"));
 
     return g_strdup(_("Unknown"));
+}
+
+gchar *
+computer_get_dmesg_status(void)
+{
+    gchar *out = NULL, *err = NULL;
+    int ex = 1, result = 0;
+    hardinfo_spawn_command_line_sync("dmesg", &out, &err, &ex, NULL);
+    g_free(out);
+    g_free(err);
+    result += (getuid() == 0) ? 2 : 0;
+    result += ex ? 1 : 0;
+    switch(result) {
+        case 0: /* readable, user */
+            return g_strdup(_("User access allowed"));
+        case 1: /* unreadable, user */
+            return g_strdup(_("User access forbidden"));
+        case 2: /* readable, root */
+            return g_strdup(_("Access allowed (running as superuser)"));
+        case 3: /* unreadable, root */
+            return g_strdup(_("Access forbidden? (running as superuser)"));
+    }
+    return g_strdup(_("(Unknown)"));
+}
+
+gchar *
+computer_get_aslr(void)
+{
+    switch (h_sysfs_read_int("/proc/sys/kernel", "randomize_va_space")) {
+    case 0:
+        return g_strdup(_("Disabled"));
+    case 1:
+        return g_strdup(_("Partially enabled (mmap base+stack+VDSO base)"));
+    case 2:
+        return g_strdup(_("Fully enabled (mmap base+stack+VDSO base+heap)"));
+    default:
+        return g_strdup(_("Unknown"));
+    }
 }
 
 gchar *
@@ -281,7 +348,77 @@ computer_get_language(void)
     return ret;
 }
 
-static gchar *
+static Distro
+parse_os_release(void)
+{
+    gchar *pretty_name = NULL;
+    gchar *id = NULL;
+    gchar *codename = NULL;
+    gchar **split, *contents, **line;
+
+    if (!g_file_get_contents("/usr/lib/os-release", &contents, NULL, NULL))
+        return (Distro) {};
+
+    split = g_strsplit(idle_free(contents), "\n", 0);
+    if (!split)
+        return (Distro) {};
+
+    for (line = split; *line; line++) {
+        if (!strncmp(*line, "ID=", sizeof("ID=") - 1)) {
+            id = g_strdup(*line + strlen("ID="));
+        } else if (!strncmp(*line, "CODENAME=", sizeof("CODENAME=") - 1)) {
+            codename = g_strdup(*line + strlen("CODENAME="));
+        } else if (!strncmp(*line, "PRETTY_NAME=", sizeof("PRETTY_NAME=") - 1)) {
+            pretty_name = g_strdup(*line +
+                                   strlen("PRETTY_NAME=\""));
+            strend(pretty_name, '"');
+        }
+    }
+
+    g_strfreev(split);
+
+    if (pretty_name)
+        return (Distro) { .distro = pretty_name, .codename = codename, .id = id };
+
+    g_free(id);
+    return (Distro) {};
+}
+
+static Distro
+parse_lsb_release(void)
+{
+    gchar *pretty_name = NULL;
+    gchar *id = NULL;
+    gchar *codename = NULL;
+    gchar **split, *contents, **line;
+
+    if (!hardinfo_spawn_command_line_sync("/usr/bin/lsb_release -di", &contents, NULL, NULL, NULL))
+        return (Distro) {};
+
+    split = g_strsplit(idle_free(contents), "\n", 0);
+    if (!split)
+        return (Distro) {};
+
+    for (line = split; *line; line++) {
+        if (!strncmp(*line, "Distributor ID:\t", sizeof("Distributor ID:\t") - 1)) {
+            id = g_utf8_strdown(*line + strlen("Distributor ID:\t"), -1);
+        } else if (!strncmp(*line, "Codename:\t", sizeof("Codename:\t") - 1)) {
+            codename = g_utf8_strdown(*line + strlen("Codename:\t"), -1);
+        } else if (!strncmp(*line, "Description:\t", sizeof("Description:\t") - 1)) {
+            pretty_name = g_strdup(*line + strlen("Description:\t"));
+        }
+    }
+
+    g_strfreev(split);
+
+    if (pretty_name)
+        return (Distro) { .distro = pretty_name, .codename = codename, .id = id };
+
+    g_free(id);
+    return (Distro) {};
+}
+
+static Distro
 detect_distro(void)
 {
     static const struct {
@@ -292,11 +429,11 @@ detect_distro(void)
 #define DB_PREFIX "/etc/"
         { DB_PREFIX "arch-release", "arch", "Arch Linux" },
         { DB_PREFIX "fatdog-version", "fatdog" },
-        { DB_PREFIX "debian_version", "deb" },
+        { DB_PREFIX "debian_version", "debian" },
         { DB_PREFIX "slackware-version", "slk" },
         { DB_PREFIX "mandrake-release", "mdk" },
         { DB_PREFIX "mandriva-release", "mdv" },
-        { DB_PREFIX "fedora-release", "fdra" },
+        { DB_PREFIX "fedora-release", "fedora" },
         { DB_PREFIX "coas", "coas" },
         { DB_PREFIX "environment.corel", "corel"},
         { DB_PREFIX "gentoo-release", "gnt" },
@@ -305,7 +442,6 @@ detect_distro(void)
         { DB_PREFIX "turbolinux-release", "tl" },
         { DB_PREFIX "yellowdog-release", "yd" },
         { DB_PREFIX "sabayon-release", "sbn" },
-        { DB_PREFIX "arch-release", "arch" },
         { DB_PREFIX "enlisy-release", "enlsy" },
         { DB_PREFIX "SuSE-release", "suse" },
         { DB_PREFIX "sun-release", "sun" },
@@ -324,15 +460,17 @@ detect_distro(void)
 #undef DB_PREFIX
         { NULL, NULL }
     };
+    Distro distro;
     gchar *contents;
     int i;
 
-    if (g_spawn_command_line_sync("lsb_release -d", &contents, NULL, NULL, NULL)) {
-        gchar *tmp = strstr(idle_free(contents), "Description:\t");
+    distro = parse_os_release();
+    if (distro.distro)
+        return distro;
 
-        if (tmp)
-            return g_strdup(tmp + strlen("Description:\t"));
-    }
+    distro = parse_lsb_release();
+    if (distro.distro)
+        return distro;
 
     for (i = 0; distro_db[i].file; i++) {
         if (!g_file_get_contents(distro_db[i].file, &contents, NULL, NULL))
@@ -340,23 +478,31 @@ detect_distro(void)
 
         if (distro_db[i].override) {
             g_free(contents);
-            return g_strdup(distro_db[i].override);
+            return (Distro) { .distro = g_strdup(distro_db[i].override),
+                              .codename = g_strdup(distro_db[i].codename) };
         }
 
-        if (g_str_equal(distro_db[i].codename, "deb")) {
+        if (g_str_equal(distro_db[i].codename, "debian")) {
             /* HACK: Some Debian systems doesn't include the distribuition
              * name in /etc/debian_release, so add them here. */
             if (isdigit(contents[0]) || contents[0] != 'D')
-                return g_strdup_printf("Debian GNU/Linux %s", (char*)idle_free(contents));
+                return (Distro) {
+                    .distro = g_strdup_printf("Debian GNU/Linux %s", (char*)idle_free(contents)),
+                    .codename = g_strdup(distro_db[i].codename)
+                };
         }
 
-        if (g_str_equal(distro_db[i].codename, "fatdog"))
-            return g_strdup_printf("Fatdog64 [%.10s]", (char*)idle_free(contents));
+        if (g_str_equal(distro_db[i].codename, "fatdog")) {
+            return (Distro) {
+                .distro = g_strdup_printf("Fatdog64 [%.10s]", (char*)idle_free(contents)),
+                .codename = g_strdup(distro_db[i].codename)
+            };
+        }
 
-        return contents;
+        return (Distro) { .distro = contents, .codename = g_strdup(distro_db[i].codename) };
     }
 
-    return g_strdup(_("Unknown"));
+    return (Distro) { .distro = g_strdup(_("Unknown")) };
 }
 
 OperatingSystem *
@@ -368,13 +514,17 @@ computer_get_os(void)
 
     os = g_new0(OperatingSystem, 1);
 
-    os->distro = g_strstrip(detect_distro());
+    Distro distro = detect_distro();
+    os->distro = g_strstrip(distro.distro);
+    os->distroid = distro.id;
+    os->distrocode = distro.codename;
 
     /* Kernel and hostname info */
     uname(&utsbuf);
     os->kernel_version = g_strdup(utsbuf.version);
     os->kernel = g_strdup_printf("%s %s (%s)", utsbuf.sysname,
 				 utsbuf.release, utsbuf.machine);
+    os->kcmdline = h_sysfs_read_string("/proc", "cmdline");
     os->hostname = g_strdup(utsbuf.nodename);
     os->language = computer_get_language();
     os->homedir = g_strdup(g_get_home_dir());
@@ -389,5 +539,41 @@ computer_get_os(void)
 
     os->entropy_avail = computer_get_entropy_avail();
 
+    if (g_strcmp0(os->distrocode, "ubuntu") == 0) {
+        GSList *flavs = ubuntu_flavors_scan();
+        if (flavs) {
+            /* just use the first one */
+            os->distro_flavor = (DistroFlavor*)flavs->data;
+        }
+        g_slist_free(flavs);
+    }
+
     return os;
+}
+
+const gchar *
+computer_get_selinux(void)
+{
+    int r;
+    gboolean spawned = hardinfo_spawn_command_line_sync("selinuxenabled",
+                                                 NULL, NULL, &r, NULL);
+
+    if (!spawned)
+        return _("Not installed");
+
+    if (r == 0)
+        return _("Enabled");
+
+    return _("Disabled");
+}
+
+gchar *
+computer_get_lsm(void)
+{
+    gchar *contents;
+
+    if (!g_file_get_contents("/sys/kernel/security/lsm", &contents, NULL, NULL))
+        return g_strdup(_("Unknown"));
+
+    return contents;
 }

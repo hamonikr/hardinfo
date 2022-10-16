@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -20,6 +20,10 @@
 #include "benchmark.h"
 #include "fftbench.h"
 
+/* if anything changes in this block, increment revision */
+#define BENCH_REVISION -1
+#define FFT_MAXT 4
+
 static gpointer fft_for(unsigned int start, unsigned int end, void *data, gint thread_number)
 {
     unsigned int i;
@@ -32,8 +36,6 @@ static gpointer fft_for(unsigned int start, unsigned int end, void *data, gint t
 
     return NULL;
 }
-
-#define FFT_MAXT 4
 
 void
 benchmark_fft(void)
@@ -50,7 +52,7 @@ benchmark_fft(void)
     /* Pre-allocate all benchmarks */
     benches = g_new0(FFTBench *, FFT_MAXT);
     for (i = 0; i < FFT_MAXT; i++) {
-      benches[i] = fft_bench_new();
+        benches[i] = fft_bench_new();
     }
 
     /* Run the benchmark */
@@ -58,10 +60,11 @@ benchmark_fft(void)
 
     /* Free up the memory */
     for (i = 0; i < FFT_MAXT; i++) {
-      fft_bench_free(benches[i]);
+        fft_bench_free(benches[i]);
     }
     g_free(benches);
 
     r.result = r.elapsed_time;
+    r.revision = BENCH_REVISION;
     bench_results[BENCHMARK_FFT] = r;
 }

@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2006 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2006 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -16,239 +16,185 @@
  *    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  */
 
-/*
- * TODO: This thing must be rewritten. We really should have a struct with all the
- *       PCI stuff we'll present to the user, and hash them by the PCI ID
- *       (domain:bus:device.function).
- *       This way we'll have ways to better organize the output, instead of relying
- *       on the order the information appears on lspci's output.
- *       Also, the "Resources" thing might be better implemented (and we won't need
- *       copies of information scattered everywhere like we do today).
- */
-
 #include <string.h>
 
 #include "hardinfo.h"
 #include "devices.h"
+#include "pci_util.h"
 
-GHashTable *_pci_devices = NULL;
+#define UNKIFNULL_AC(f) (f != NULL) ? f : _("(Unknown)");
 
-void
-scan_pci_do(void)
+static const struct {
+    const gchar *icon;
+    uint32_t class;
+} class2icon[] = {
+    { .class = 0x0200, .icon = "network-interface.png" },
+    { .class = 0x0c03, .icon = "usb.png" },
+    { .class = 0x0403, .icon = "audio.png" },
+    { .class = 0x0805, .icon = "usbfldisk.png" },
+    { .class = 0x0d11, .icon = "bluetooth.png" },
+    { .class = 0x0703, .icon = "modem.png" },
+    { .class = 0x01, .icon = "hdd.png" },
+    { .class = 0x02, .icon = "network.png" },
+    { .class = 0x03, .icon = "monitor.png" },
+    { .class = 0x05, .icon = "memory.png" },
+    { .class = 0x07, .icon = "network-connections.png" },
+    { .class = 0x09, .icon = "inputdevices.png" },
+    { .class = 0x10, .icon = "cryptohash.png" },
+};
+
+static const gchar *find_icon_for_class(uint32_t class)
 {
-    FILE *lspci;
-    gchar buffer[256], *buf, *strhash = NULL, *strdevice = NULL;
-    gchar *category = NULL, *name = NULL, *icon, *lspci_path, *command_line = NULL;
-    gint n = 0, x = 0;
+    int i;
 
-    if ((lspci_path = find_program("lspci")) == NULL) {
-      goto pci_error;
-    } else {
-      command_line = g_strdup_printf("%s -v", lspci_path);
-    }
-
-    if (!_pci_devices) {
-      _pci_devices = g_hash_table_new(g_str_hash, g_str_equal);
-    }
-
-    buf = g_build_filename(g_get_home_dir(), ".hardinfo", "pci.ids", NULL);
-    if (!g_file_test(buf, G_FILE_TEST_EXISTS)) {
-      DEBUG("using system-provided PCI IDs");
-      g_free(buf);
-      if (!(lspci = popen(command_line, "r"))) {
-        goto pci_error;
-      }
-    } else {
-      gchar *tmp;
-
-      tmp = g_strdup_printf("%s -i '%s'", command_line, buf);
-      g_free(buf);
-      buf = tmp;
-
-      DEBUG("using updated PCI IDs (from %s)", buf);
-      if (!(lspci = popen(tmp, "r"))) {
-        g_free(buf);
-        goto pci_error;
-      } else {
-        g_free(buf);
-      }
-    }
-
-    while (fgets(buffer, 256, lspci)) {
-	buf = g_strstrip(buffer);
-
-	if (!strncmp(buf, "Flags", 5)) {
-	    gint irq = 0, freq = 0, latency = 0, i;
-	    gchar **list;
-	    gboolean bus_master;
-
-	    buf += 7;
-
-	    bus_master = FALSE;
-
-	    list = g_strsplit(buf, ", ", 10);
-	    for (i = 0; i <= 10; i++) {
-		if (!list[i])
-		    break;
-
-		if (!strncmp(list[i], "IRQ", 3))
-		    sscanf(list[i], "IRQ %d", &irq);
-		else if (strstr(list[i], "Mhz"))
-		    sscanf(list[i], "%dMhz", &freq);
-		else if (!strncmp(list[i], "bus master", 10))
-		    bus_master = TRUE;
-		else if (!strncmp(list[i], "latency", 7))
-		    sscanf(list[i], "latency %d", &latency);
-	    }
-	    g_strfreev(list);
-
-	    if (irq)
-		strdevice = h_strdup_cprintf("%s=%d\n", strdevice, _("IRQ"), irq);
-	    if (freq)
-		strdevice = h_strdup_cprintf("%s=%d %s\n", strdevice, _("Frequency"), freq, _("MHz") );
-	    if (latency)
-		strdevice = h_strdup_cprintf("%s=%d\n", strdevice, _("Latency"), latency);
-
-	    strdevice = h_strdup_cprintf("%s=%s\n", strdevice, _("Bus Master"), bus_master ? _("Yes") : _("No") );
-	} else if (!strncmp(buf, "Kernel modules", 14)) {
-	    WALK_UNTIL(' ');
-	    WALK_UNTIL(':');
-	    buf++;
-
-	    strdevice = h_strdup_cprintf("%s=%s\n", strdevice, _("Kernel modules"), buf);
-	} else if (!strncmp(buf, "Subsystem", 9)) {
-	    WALK_UNTIL(' ');
-	    buf++;
-	    const gchar *oem_vendor_url = vendor_get_url(buf);
-            if (oem_vendor_url)
-                strdevice = h_strdup_cprintf(_("%s=%s (%s)\n"),
-                                            strdevice,
-                                            _("OEM Vendor"),
-                                            vendor_get_name(buf),
-                                            oem_vendor_url);
-	} else if (!strncmp(buf, "Capabilities", 12)
-		   && !strstr(buf, "only to root") &&
-		      !strstr(buf, "access denied")) {
-	    WALK_UNTIL(' ');
-	    WALK_UNTIL(']');
-	    buf++;
-	    strdevice = h_strdup_cprintf("Capability#%d=%s\n", strdevice, ++x, buf);
-	} else if (!strncmp(buf, "Memory at", 9) && strstr(buf, "[size=")) {
-	    gint mem;
-	    gchar unit;
-	    gboolean prefetch;
-	    gboolean _32bit;
-
-	    prefetch = strstr(buf, "non-prefetchable") ? FALSE : TRUE;
-	    _32bit = strstr(buf, "32-bit") ? TRUE : FALSE;
-
-	    WALK_UNTIL('[');
-	    sscanf(buf, "[size=%d%c", &mem, &unit);
-
-	    strdevice = h_strdup_cprintf("%s#%d=%d%cB (%s%s)\n",
-					strdevice, _("Memory"), ++x,
-					mem,
-					(unit == ']') ? ' ' : unit,
-					_32bit ? "32-bit, " : "",
-					prefetch ? _("prefetchable") :
-					_("non-prefetchable") );
-
-	} else if (!strncmp(buf, "I/O ports at", 12)) {
-	    guint io_addr, io_size;
-
-	    sscanf(buf, "I/O ports at %x [size=%d]", &io_addr, &io_size);
-
-	    strdevice =
-		h_strdup_cprintf("%s#%d=0x%x - 0x%x\n",
-				strdevice, _("I/O ports at"), ++x, io_addr,
-				io_addr + io_size - 1);
-	} else if ((buf[0] >= '0' && buf[0] <= '9') && (buf[4] == ':' || buf[2] == ':')) {
-	    gint bus, device, function, domain;
-	    gpointer start, end;
-
-	    if (strdevice != NULL && strhash != NULL) {
-                moreinfo_add_with_prefix("DEV", strhash, strdevice);
-                g_free(strhash);
-                g_free(category);
-                g_free(name);
-	    }
-
-	    if (buf[4] == ':') {
-		sscanf(buf, "%x:%x:%x.%d", &domain, &bus, &device, &function);
-	    } else {
-	    	/* lspci without domain field */
-	    	sscanf(buf, "%x:%x.%x", &bus, &device, &function);
-	    	domain = 0;
-	    }
-
-	    WALK_UNTIL(' ');
-
-	    start = buf;
-
-	    WALK_UNTIL(':');
-	    end = buf + 1;
-	    *buf = 0;
-
-	    buf = start + 1;
-	    category = g_strdup(buf);
-
-	    buf = end;
-
-            if (strstr(category, "RAM memory")) icon = "mem";
-            else if (strstr(category, "Multimedia")) icon = "media";
-            else if (strstr(category, "USB")) icon = "usb";
-            else icon = "pci";
-
-	    name = g_strdup(buf);
-            g_hash_table_insert(_pci_devices,
-                                g_strdup_printf("0000:%02x:%02x.%x", bus, device, function),
-                                name);
-
-        strhash = g_strdup_printf("PCI%d", n);
-        strdevice = g_strdup_printf("[%s]\n"
-               /* Name */   "%s=%s\n"
-               /* Class */  "%s=%s\n"
-               /* Domain */ "%s=%d\n"
-               /* Bus, device, function */
-                            "%s=%d, %d, %d\n",
-                    _("Device Information"),
-                    _("Name"), name,
-                    _("Class"), category,
-                    _("Domain"), domain,
-                    _("Bus, device, function"),
-                    bus, device, function);
-
-            const gchar *url = vendor_get_url(name);
-            if (url) {
-                strdevice = h_strdup_cprintf("%s=%s (%s)\n",
-                                            strdevice,
-                                            _("Vendor"),
-                                            vendor_get_name(name),
-                                            url);
-            }
-
-            g_hash_table_insert(_pci_devices,
-                                g_strdup_printf("0000:%02x:%02x.%x", bus, device, function),
-                                g_strdup(name));
-
-	    pci_list = h_strdup_cprintf("$PCI%d$%s=%s\n", pci_list, n, category, name);
-
-	    n++;
+    for (i = 0; i < G_N_ELEMENTS(class2icon); i++) {
+	if (class2icon[i].class <= 0xff) {
+		if ((class & 0xff00) == class2icon[i].class << 8)
+		    return class2icon[i].icon;
+	} else if (class == class2icon[i].class) {
+            return class2icon[i].icon;
 	}
     }
 
-    if (pclose(lspci)) {
-pci_error:
-        /* error (no pci, perhaps?) */
-        pci_list = g_strconcat(pci_list, _("No PCI devices found"), "=\n", NULL);
-    } else if (strhash) {
-        /* insert the last device */
-        moreinfo_add_with_prefix("DEV", strhash, strdevice);
-        g_free(strhash);
-        g_free(category);
-        g_free(name);
+    return "devices.png";
+}
+
+static gchar *_pci_dev(const pcid *p, gchar *icons) {
+    gchar *str;
+    const gchar *class, *vendor, *svendor, *product, *sproduct, *lproduct;
+    gchar *name, *key;
+
+    gboolean device_is_sdevice = (p->vendor_id == p->sub_vendor_id && p->device_id == p->sub_device_id);
+
+    class = UNKIFNULL_AC(p->class_str);
+    vendor = UNKIFNULL_AC(p->vendor_id_str);
+    svendor = UNKIFNULL_AC(p->sub_vendor_id_str);
+    product = UNKIFNULL_AC(p->device_id_str);
+    sproduct = UNKIFNULL_AC(p->sub_device_id_str);
+    lproduct = p->device_id_str ? p->device_id_str : p->class_str;
+    lproduct = UNKIFNULL_AC(lproduct);
+
+    gchar *ven_tag = vendor_match_tag(p->vendor_id_str, params.fmt_opts);
+    gchar *sven_tag = vendor_match_tag(p->sub_vendor_id_str, params.fmt_opts);
+    if (ven_tag) {
+        if (sven_tag && p->vendor_id != p->sub_vendor_id) {
+            name = g_strdup_printf("%s %s %s", sven_tag, ven_tag, lproduct);
+        } else {
+            name = g_strdup_printf("%s %s", ven_tag, lproduct);
+        }
+    } else {
+        name = g_strdup_printf("%s %s", vendor, lproduct);
+    }
+    g_free(ven_tag);
+    g_free(sven_tag);
+
+    key = g_strdup_printf("PCI%04x:%02x:%02x.%01x", p->domain, p->bus, p->device, p->function);
+
+    pci_list = h_strdup_cprintf("$%s$%04x:%02x:%02x.%01x=%s\n", pci_list, key, p->domain, p->bus, p->device, p->function, name);
+    icons = h_strdup_cprintf("Icon$%s$%04x:%02x:%02x.%01x=%s\n", icons, key, p->domain, p->bus, p->device, p->function, find_icon_for_class(p->class));
+
+    gchar *vendor_device_str;
+    if (device_is_sdevice) {
+        vendor_device_str = g_strdup_printf(
+                     /* Vendor */     "$^$%s=[%04x] %s\n"
+                     /* Device */     "%s=[%04x] %s\n",
+                    _("Vendor"), p->vendor_id, vendor,
+                    _("Device"), p->device_id, product);
+    } else {
+        vendor_device_str = g_strdup_printf(
+                     /* Vendor */     "$^$%s=[%04x] %s\n"
+                     /* Device */     "%s=[%04x] %s\n"
+                     /* Sub-device vendor */  "$^$%s=[%04x] %s\n"
+                     /* Sub-device */     "%s=[%04x] %s\n",
+                    _("Vendor"), p->vendor_id, vendor,
+                    _("Device"), p->device_id, product,
+                    _("SVendor"), p->sub_vendor_id, svendor,
+                    _("SDevice"), p->sub_device_id, sproduct);
     }
 
-    g_free(lspci_path);
-    g_free(command_line);
+    gchar *pcie_str;
+    if (p->pcie_width_curr) {
+        pcie_str = g_strdup_printf("[%s]\n"
+                     /* Width */        "%s=x%u\n"
+                     /* Width (max) */  "%s=x%u\n"
+                     /* Speed */        "%s=%0.1f %s\n"
+                     /* Speed (max) */  "%s=%0.1f %s\n",
+                    _("PCI Express"),
+                    _("Link Width"), p->pcie_width_curr,
+                    _("Maximum Link Width"), p->pcie_width_max,
+                    _("Link Speed"), p->pcie_speed_curr,  _("GT/s"),
+                    _("Maximum Link Speed"), p->pcie_speed_max, _("GT/s") );
+    } else
+        pcie_str = strdup("");
+
+    str = g_strdup_printf("[%s]\n"
+             /* Class */     "%s=[%04x] %s\n"
+                             "%s"
+             /* Revision */  "%s=%02x\n"
+             /* PCIE? */     "%s"
+                             "[%s]\n"
+            /* Driver */     "%s=%s\n"
+            /* Modules */    "%s=%s\n"
+                             "[%s]\n"
+            /* Domain */     "%s=%04x\n"
+            /* Bus */        "%s=%02x\n"
+            /* Device */     "%s=%02x\n"
+            /* Function */   "%s=%01x\n",
+                _("Device Information"),
+                _("Class"), p->class, class,
+                vendor_device_str,
+                _("Revision"), p->revision,
+                pcie_str,
+                _("Driver"),
+                _("In Use"), (p->driver) ? p->driver : _("(Unknown)"),
+                _("Kernel Modules"), (p->driver_list) ? p->driver_list : _("(Unknown)"),
+                _("Connection"),
+                _("Domain"), p->domain,
+                _("Bus"), p->bus,
+                _("Device"), p->device,
+                _("Function"), p->function
+                );
+
+    g_free(pcie_str);
+
+    moreinfo_add_with_prefix("DEV", key, str); /* str now owned by morinfo */
+
+    g_free(vendor_device_str);
+    g_free(name);
+    g_free(key);
+
+    return icons;
+}
+
+void scan_pci_do(void) {
+
+    if (pci_list) {
+        moreinfo_del_with_prefix("DEV:PCI");
+        g_free(pci_list);
+    }
+    pci_list = g_strdup_printf("[%s]\n", _("PCI Devices"));
+
+    gchar *pci_icons = g_strdup("");
+
+    pcid_list list = pci_get_device_list(0,0);
+    list = g_slist_sort(list, pcid_cmp_by_addy);
+    GSList *l = list;
+
+    int c = 0;
+    while(l) {
+        pcid *curr = (pcid*)l->data;
+        pci_icons = _pci_dev(curr, pci_icons);
+        c++;
+        l=l->next;
+    }
+    pcid_list_free(list);
+
+    if (c) {
+        pci_list = g_strconcat(pci_list, "[$ShellParam$]\n", "ViewType=1\n", pci_icons, NULL);
+    } else  {
+        /* NO PCI? */
+        pci_list = g_strconcat(pci_list, _("No PCI devices found"), "=\n", NULL);
+    }
+
+    g_free(pci_icons);
 }

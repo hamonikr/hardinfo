@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -35,7 +35,7 @@ scan_boots_real(void)
     else
       return;
 
-    spawned = g_spawn_command_line_sync("last",
+    spawned = hardinfo_spawn_command_line_sync("last",
             &out, &err, NULL, NULL);
     if (spawned && out != NULL) {
         p = out;

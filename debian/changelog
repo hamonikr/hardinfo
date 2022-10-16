@@ -1,3 +1,10 @@
+hardinfo (0.5.1+git20221016-hamonikr1) taebaek; urgency=medium
+
+  * Release for HamoniKR 6.0
+   - Merge from upstream HardInfo 0.6-alpha
+
+ -- HamoniKR <pkg@hamonikr.org>  Sun, 16 Oct 2022 20:54:03 +0900
+
 hardinfo (0.5.1+git20180227-2-hamonikr1) jin; urgency=medium
 
   * Add Korean translation

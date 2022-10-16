@@ -1,6 +1,6 @@
 /*
  * HardInfo
- * Copyright(C) 2003-2007 Leandro A. F. Pereira.
+ * Copyright(C) 2003-2007 L. A. F. Pereira.
  *
  * menu.c is based on UI Manager tutorial by Ryan McDougall
  * Copyright(C) 2005 Ryan McDougall.
@@ -31,6 +31,14 @@
 
 #include "uidefs.h"
 
+#ifndef GTK_STOCK_COPY
+#define GTK_STOCK_COPY "_Copy"
+#endif
+
+#ifndef GTK_STOCK_REFRESH
+#define GTK_STOCK_REFRESH "_Refresh"
+#endif
+
 static GtkActionEntry entries[] = {
     {"InformationMenuAction", NULL, N_("_Information")},	/* name, stock id, label */
     {"RemoteMenuAction", NULL, N_("_Remote")},
@@ -41,12 +49,12 @@ static GtkActionEntry entries[] = {
 
     {"ReportAction", HI_STOCK_REPORT,	/* name, stock id */
      N_("Generate _Report"), "<control>R",	/* label, accelerator */
-     NULL,			/* tooltip */
+     N_("Generates a report with detailed system information"),			/* tooltip */
      G_CALLBACK(cb_generate_report)},
 
     {"SyncManagerAction", HI_STOCK_SYNC_MENU,
-     N_("_Network Updater..."), NULL,
-     NULL,
+     N_("Synchronize"), NULL,
+     N_("Send benchmark results and receive updated data from the network"),
      G_CALLBACK(cb_sync_manager)},
 
     {"OpenAction", "_Open",
@@ -54,12 +62,12 @@ static GtkActionEntry entries[] = {
      NULL,
      G_CALLBACK(cb_sync_manager)},
 
-    {"CopyAction", "_Copy",
+    {"CopyAction", GTK_STOCK_COPY,
      N_("_Copy to Clipboard"), "<control>C",
      N_("Copy to clipboard"),
      G_CALLBACK(cb_copy_to_clipboard)},
 
-    {"RefreshAction", "_Refresh",
+    {"RefreshAction", GTK_STOCK_REFRESH,
      N_("_Refresh"), "F5",
      NULL,
      G_CALLBACK(cb_refresh)},

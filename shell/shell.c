@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -15,6 +15,8 @@
  *    along with this program; if not, write to the Free Software
  *    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  */
+#define _GNU_SOURCE
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -33,19 +35,27 @@
 
 #include "callbacks.h"
 
+struct UpdateTableItem {
+    union {
+        GtkWidget *widget;
+        GtkTreeIter *iter;
+    };
+    gboolean is_iter;
+};
+
 /*
  * Internal Prototypes ********************************************************
  */
 
-static void create_window();
+static void create_window(void);
 static ShellTree *tree_new(void);
-static ShellInfoTree *info_tree_new(gboolean extra);
+static ShellInfoTree *info_tree_new(void);
 
 static void module_selected(gpointer data);
 static void module_selected_show_info(ShellModuleEntry * entry,
 				      gboolean reload);
 static void info_selected(GtkTreeSelection * ts, gpointer data);
-static void info_selected_show_extra(gchar * data);
+static void info_selected_show_extra(const gchar *tag);
 static gboolean reload_section(gpointer data);
 static gboolean rescan_section(gpointer data);
 static gboolean update_field(gpointer data);
@@ -57,6 +67,8 @@ static gboolean update_field(gpointer data);
 static Shell *shell = NULL;
 static GHashTable *update_tbl = NULL;
 static GSList *update_sfusrc = NULL;
+
+gchar *lginterval = NULL;
 
 /*
  * Code :) ********************************************************************
@@ -87,9 +99,8 @@ void shell_ui_manager_set_visible(const gchar * path, gboolean setting)
 void shell_clear_tree_models(Shell *shell)
 {
     gtk_tree_store_clear(GTK_TREE_STORE(shell->tree->model));
-    gtk_tree_store_clear(GTK_TREE_STORE(shell->info->model));
-    gtk_tree_store_clear(GTK_TREE_STORE(shell->moreinfo->model));
-    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(shell->info->view), FALSE);
+    gtk_tree_store_clear(GTK_TREE_STORE(shell->info_tree->model));
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(shell->info_tree->view), FALSE);
 }
 
 void shell_clear_timeouts(Shell *shell)
@@ -236,7 +247,7 @@ void shell_status_pulse(void)
 	gtk_progress_bar_pulse(GTK_PROGRESS_BAR(shell->progress));
 	while (gtk_events_pending())
 	    gtk_main_iteration();
-    } else {
+    } else if (!params.quiet) {
 	static gint counter = 0;
 
 	fprintf(stderr, "\033[2K\033[40;37;1m %c\033[0m\r",
@@ -251,7 +262,7 @@ void shell_status_set_percentage(gint percentage)
 				      (float) percentage / 100.0);
 	while (gtk_events_pending())
 	    gtk_main_iteration();
-    } else {
+    } else if (!params.quiet) {
 	if (percentage < 1 || percentage >= 100) {
 	    fprintf(stderr, "\033[2K");
 	} else {
@@ -277,14 +288,13 @@ void shell_view_set_enabled(gboolean setting)
 	widget_set_cursor(shell->window, GDK_WATCH);
     }
 
-    gtk_widget_set_sensitive(shell->hpaned, setting);
+    gtk_widget_set_sensitive(shell->hbox, setting);
     shell_action_set_enabled("ViewMenuAction", setting);
     shell_action_set_enabled("ConnectToAction", setting);
     shell_action_set_enabled("RefreshAction", setting);
     shell_action_set_enabled("CopyAction", setting);
     shell_action_set_enabled("ReportAction", setting);
     shell_action_set_enabled("SyncManagerAction", setting && sync_manager_count_entries() > 0);
-
 }
 
 void shell_status_set_enabled(gboolean setting)
@@ -328,7 +338,7 @@ void shell_status_update(const gchar * message)
 	gtk_progress_bar_pulse(GTK_PROGRESS_BAR(shell->progress));
 	while (gtk_events_pending())
 	    gtk_main_iteration();
-    } else {
+    } else if (!params.quiet) {
 	fprintf(stderr, "\033[2K\033[40;37;1m %s\033[0m\r", message);
     }
 }
@@ -362,12 +372,8 @@ static ShellNote *note_new(void)
     gtk_container_add(GTK_CONTAINER(note->event_box), border_box);
     gtk_widget_show(border_box);
 
-#if GTK_CHECK_VERSION(3, 0, 0)
-    /* TODO:GTK3 css-based style */
-#else
     gtk_widget_modify_bg(border_box, GTK_STATE_NORMAL, &info_default_fill_color);
     gtk_widget_modify_bg(note->event_box, GTK_STATE_NORMAL, &info_default_border_color);
-#endif
 
     icon = icon_cache_get_image("close.png");
     gtk_widget_show(icon);
@@ -416,7 +422,7 @@ static void create_window(void)
 
     shell->window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
     gtk_window_set_icon(GTK_WINDOW(shell->window),
-			icon_cache_get_pixbuf("logo.png"));
+			icon_cache_get_pixbuf("hardinfo.png"));
     shell_set_title(shell, NULL);
     gtk_window_set_default_size(GTK_WINDOW(shell->window), 800, 600);
     g_signal_connect(G_OBJECT(shell->window), "destroy", destroy_me, NULL);
@@ -455,13 +461,12 @@ static void create_window(void)
     gtk_box_pack_start(GTK_BOX(hbox), shell->status, FALSE, FALSE, 5);
 
 #if GTK_CHECK_VERSION(3, 0, 0)
-    shell->hpaned = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
+    shell->hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
 #else
-    shell->hpaned = gtk_hpaned_new();
+    shell->hbox = gtk_hbox_new(FALSE, 5);
 #endif
-    gtk_widget_show(shell->hpaned);
-    gtk_box_pack_end(GTK_BOX(vbox), shell->hpaned, TRUE, TRUE, 0);
-    gtk_paned_set_position(GTK_PANED(shell->hpaned), 210);
+    gtk_widget_show(shell->hbox);
+    gtk_box_pack_end(GTK_BOX(vbox), shell->hbox, TRUE, TRUE, 0);
 
 #if GTK_CHECK_VERSION(3, 0, 0)
     vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
@@ -469,7 +474,7 @@ static void create_window(void)
     vbox = gtk_vbox_new(FALSE, 5);
 #endif
     gtk_widget_show(vbox);
-    gtk_paned_add2(GTK_PANED(shell->hpaned), vbox);
+    gtk_box_pack_end(GTK_BOX(shell->hbox), vbox, TRUE, TRUE, 0);
 
     shell->note = note_new();
     gtk_box_pack_end(GTK_BOX(vbox), shell->note->event_box, FALSE, FALSE, 0);
@@ -512,10 +517,7 @@ static void menu_item_set_icon_always_visible(Shell *shell,
 
     path = g_strdup_printf("%s/%s", parent_path, item_id);
     menuitem = gtk_ui_manager_get_widget(shell->ui_manager, path);
-#if GTK_CHECK_VERSION(3, 0, 0)
-#else
     gtk_image_menu_item_set_always_show_image(GTK_IMAGE_MENU_ITEM(menuitem), TRUE);
-#endif
     g_free(path);
 }
 
@@ -647,6 +649,7 @@ void shell_add_modules_to_gui(gpointer _shell_module, gpointer _shell_tree)
 	for (p = module->entries; p; p = g_slist_next(p)) {
 	    GtkTreeIter child;
 	    entry = (ShellModuleEntry *) p->data;
+        if (entry->flags & MODULE_FLAG_HIDE) continue;
 
 	    gtk_tree_store_append(store, &child, &parent);
 	    gtk_tree_store_set(store, &child, TREE_COL_NAME, entry->name,
@@ -668,38 +671,44 @@ void shell_add_modules_to_gui(gpointer _shell_module, gpointer _shell_tree)
     }
 }
 
-static void __tree_iter_destroy(gpointer data)
+static void destroy_update_tbl_value(gpointer data)
 {
-    gtk_tree_iter_free((GtkTreeIter *) data);
+    struct UpdateTableItem *item = data;
+
+    if (item->is_iter) {
+        gtk_tree_iter_free(item->iter);
+    } else {
+        g_object_unref(item->widget);
+    }
+
+    g_free(item);
 }
 
-ShellSummary *summary_new(void)
+DetailView *detail_view_new(void)
 {
-    ShellSummary *summary;
+    DetailView *detail_view;
 
-    summary = g_new0(ShellSummary, 1);
-    summary->scroll = gtk_scrolled_window_new(NULL, NULL);
+    detail_view = g_new0(DetailView, 1);
+    detail_view->scroll = gtk_scrolled_window_new(NULL, NULL);
 #if GTK_CHECK_VERSION(3, 0, 0)
-    summary->view = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+    detail_view->view = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 #else
-    summary->view = gtk_vbox_new(FALSE, 5);
+    detail_view->view = gtk_vbox_new(FALSE, 0);
 #endif
-    summary->items = NULL;
 
-    gtk_container_set_border_width(GTK_CONTAINER(summary->view), 6);
-    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(summary->scroll),
-                                   GTK_POLICY_AUTOMATIC,
-                                   GTK_POLICY_AUTOMATIC);
+    gtk_scrolled_window_set_shadow_type(GTK_SCROLLED_WINDOW(detail_view->scroll),
+                                        GTK_SHADOW_IN);
+    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(detail_view->scroll),
+                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
 #if GTK_CHECK_VERSION(3, 0, 0)
-    gtk_container_add(GTK_CONTAINER(summary->scroll),
-                                          summary->view);
+    gtk_container_add(GTK_CONTAINER(detail_view->scroll), detail_view->view);
 #else
-    gtk_scrolled_window_add_with_viewport(GTK_SCROLLED_WINDOW(summary->scroll),
-                                          summary->view);
+    gtk_scrolled_window_add_with_viewport(
+        GTK_SCROLLED_WINDOW(detail_view->scroll), detail_view->view);
 #endif
-    gtk_widget_show_all(summary->scroll);
+    gtk_widget_show_all(detail_view->scroll);
 
-    return summary;
+    return detail_view;
 }
 
 static gboolean
@@ -713,6 +722,27 @@ select_first_tree_item(gpointer data)
     return FALSE;
 }
 
+gboolean hardinfo_link(const gchar *uri) {
+    /* Clicked link events pass through here on their
+     * way to the default handler (xdg-open).
+     *
+     * TODO: In the future, links could be used to
+     * jump to different pages in hardinfo.
+     *
+     * if (g_str_has_prefix(uri, "hardinfo:")) {
+     *       hardinfo_navigate(g_utf8_strchr(uri, strlen("hardinfo"), ':') + 1);
+     *       return TRUE;
+     * }
+     */
+
+    return FALSE; /* didn't handle it */
+}
+
+void shell_set_transient_dialog(GtkWindow *dialog)
+{
+    shell->transient_dialog = dialog ? dialog : GTK_WINDOW(shell->window);
+}
+
 void shell_init(GSList * modules)
 {
     if (shell) {
@@ -722,6 +752,9 @@ void shell_init(GSList * modules)
 
     DEBUG("initializing shell");
 
+    uri_set_function(hardinfo_link);
+    params.fmt_opts = FMT_OPT_PANGO;
+
     create_window();
 
     shell_action_set_property("ConnectToAction", "is-important", TRUE);
@@ -729,28 +762,27 @@ void shell_init(GSList * modules)
     shell_action_set_property("RefreshAction", "is-important", TRUE);
     shell_action_set_property("ReportAction", "is-important", TRUE);
     shell_action_set_property("ReportBugAction", "is-important", TRUE);
+    shell_action_set_property("SyncManagerAction", "is-important", TRUE);
 
     shell->tree = tree_new();
-    shell->info = info_tree_new(FALSE);
-    shell->moreinfo = info_tree_new(TRUE);
+    shell->info_tree = info_tree_new();
     shell->loadgraph = load_graph_new(75);
-    shell->summary = summary_new();
+    shell->detail_view = detail_view_new();
+    shell->transient_dialog = GTK_WINDOW(shell->window);
 
     update_tbl = g_hash_table_new_full(g_str_hash, g_str_equal,
-                                       g_free, __tree_iter_destroy);
+                                       g_free, destroy_update_tbl_value);
 
-    gtk_paned_pack1(GTK_PANED(shell->hpaned), shell->tree->scroll,
-		    SHELL_PACK_RESIZE, SHELL_PACK_SHRINK);
-    gtk_paned_pack1(GTK_PANED(shell->vpaned), shell->info->scroll,
+    gtk_box_pack_start(GTK_BOX(shell->hbox), shell->tree->scroll,
+                       FALSE, FALSE, 0);
+    gtk_paned_pack1(GTK_PANED(shell->vpaned), shell->info_tree->scroll,
 		    SHELL_PACK_RESIZE, SHELL_PACK_SHRINK);
 
-    gtk_notebook_append_page(GTK_NOTEBOOK(shell->notebook),
-			     shell->moreinfo->scroll, NULL);
     gtk_notebook_append_page(GTK_NOTEBOOK(shell->notebook),
 			     load_graph_get_framed(shell->loadgraph),
 			     NULL);
     gtk_notebook_append_page(GTK_NOTEBOOK(shell->notebook),
-                             shell->summary->scroll, NULL);
+                             shell->detail_view->scroll, NULL);
 
     gtk_notebook_set_show_tabs(GTK_NOTEBOOK(shell->notebook), FALSE);
     gtk_notebook_set_show_border(GTK_NOTEBOOK(shell->notebook), FALSE);
@@ -763,7 +795,7 @@ void shell_init(GSList * modules)
     g_slist_foreach(shell->tree->modules, shell_add_modules_to_gui, shell->tree);
     gtk_tree_view_expand_all(GTK_TREE_VIEW(shell->tree->view));
 
-    gtk_widget_show_all(shell->hpaned);
+    gtk_widget_show_all(shell->hbox);
 
     load_graph_configure_expose(shell->loadgraph);
     gtk_widget_hide(shell->notebook);
@@ -790,48 +822,56 @@ void shell_init(GSList * modules)
 static gboolean update_field(gpointer data)
 {
     ShellFieldUpdate *fu;
-    GtkTreeIter *iter;
+    struct UpdateTableItem *item;
 
-    fu = (ShellFieldUpdate *) data;
+    fu = (ShellFieldUpdate *)data;
     g_return_val_if_fail(fu != NULL, FALSE);
 
     DEBUG("update_field [%s]", fu->field_name);
 
-    iter = g_hash_table_lookup(update_tbl, fu->field_name);
-    if (!iter) {
+    item = g_hash_table_lookup(update_tbl, fu->field_name);
+    if (!item) {
         return FALSE;
     }
 
     /* if the entry is still selected, update it */
-    if (iter && fu->entry->selected && fu->entry->fieldfunc) {
-	GtkTreeStore *store = GTK_TREE_STORE(shell->info->model);
-	gchar *value = fu->entry->fieldfunc(fu->field_name);
+    if (fu->entry->selected && fu->entry->fieldfunc) {
+        gchar *value = fu->entry->fieldfunc(fu->field_name);
 
-	/*
-	 * this function is also used to feed the load graph when ViewType
-	 * is SHELL_VIEW_LOAD_GRAPH
-	 */
-	if (shell->view_type == SHELL_VIEW_LOAD_GRAPH &&
-	    gtk_tree_selection_iter_is_selected(shell->info->selection,
-						iter)) {
-	    load_graph_update(shell->loadgraph, atof(value));
-	}
+        if (item->is_iter) {
+            /*
+             * this function is also used to feed the load graph when ViewType
+             * is SHELL_VIEW_LOAD_GRAPH
+             */
+            if (shell->view_type == SHELL_VIEW_LOAD_GRAPH &&
+                gtk_tree_selection_iter_is_selected(shell->info_tree->selection,
+                                                    item->iter)) {
 
-	gtk_tree_store_set(store, iter, INFO_TREE_COL_VALUE, value, -1);
+                load_graph_set_title(shell->loadgraph, fu->field_name);
+                load_graph_update(shell->loadgraph, atof(value));
+            }
 
-	g_free(value);
-	return TRUE;
+            GtkTreeStore *store = GTK_TREE_STORE(shell->info_tree->model);
+            gtk_tree_store_set(store, item->iter, INFO_TREE_COL_VALUE, value, -1);
+        } else {
+            GList *children = gtk_container_get_children(GTK_CONTAINER(item->widget));
+            gtk_label_set_markup(GTK_LABEL(children->next->data), value);
+            g_list_free(children);
+        }
+
+        g_free(value);
+        return TRUE;
     }
 
     if (update_sfusrc) {
-	GSList *sfu;
+        GSList *sfu;
 
-	for (sfu = update_sfusrc; sfu; sfu = sfu->next) {
-	    g_free(sfu->data);
-	}
+        for (sfu = update_sfusrc; sfu; sfu = sfu->next) {
+            g_free(sfu->data);
+        }
 
-	g_slist_free(update_sfusrc);
-	update_sfusrc = NULL;
+        g_slist_free(update_sfusrc);
+        update_sfusrc = NULL;
     }
 
     /* otherwise, cleanup and destroy the timeout */
@@ -841,77 +881,101 @@ static gboolean update_field(gpointer data)
     return FALSE;
 }
 
-#define RANGE_SET_VALUE(tree,scrollbar,value) \
-  	  do { \
-  	      GtkRange CONCAT(*range, __LINE__) = GTK_RANGE(GTK_SCROLLED_WINDOW(shell->tree->scroll)->scrollbar); \
-  	      gtk_range_set_value(CONCAT(range, __LINE__), value); \
-              gtk_adjustment_value_changed(GTK_ADJUSTMENT(gtk_range_get_adjustment(CONCAT(range, __LINE__)))); \
-          } while (0)
-#define RANGE_GET_VALUE(tree,scrollbar) \
-  	  gtk_range_get_value(GTK_RANGE \
-	  		    (GTK_SCROLLED_WINDOW(shell->tree->scroll)-> \
-			     scrollbar))
+#if GTK_CHECK_VERSION(3, 0, 0)
+#define RANGE_SET_VALUE(...)
+#define RANGE_GET_VALUE(...) 0
+#else
+#define RANGE_SET_VALUE(tree, scrollbar, value)                                \
+    do {                                                                       \
+        GtkRange CONCAT(*range, __LINE__) =                                    \
+            GTK_RANGE(GTK_SCROLLED_WINDOW(shell->tree->scroll)->scrollbar);    \
+        gtk_range_set_value(CONCAT(range, __LINE__), value);                   \
+        gtk_adjustment_value_changed(GTK_ADJUSTMENT(                           \
+            gtk_range_get_adjustment(CONCAT(range, __LINE__))));               \
+    } while (0)
+#define RANGE_GET_VALUE(tree, scrollbar)                                       \
+    gtk_range_get_value(                                                       \
+        GTK_RANGE(GTK_SCROLLED_WINDOW(shell->tree->scroll)->scrollbar))
+#endif
+
+static void
+destroy_widget(GtkWidget *widget, gpointer user_data)
+{
+    gtk_widget_destroy(widget);
+}
+
+static void detail_view_clear(DetailView *detail_view)
+{
+    gtk_container_forall(GTK_CONTAINER(shell->detail_view->view),
+                         destroy_widget, NULL);
+    RANGE_SET_VALUE(detail_view, vscrollbar, 0.0);
+    RANGE_SET_VALUE(detail_view, hscrollbar, 0.0);
+}
 
 static gboolean reload_section(gpointer data)
 {
-    ShellModuleEntry *entry = (ShellModuleEntry *) data;
+    ShellModuleEntry *entry = (ShellModuleEntry *)data;
 #if GTK_CHECK_VERSION(2, 14, 0)
     GdkWindow *gdk_window = gtk_widget_get_window(GTK_WIDGET(shell->window));
 #endif
 
     /* if the entry is still selected, update it */
     if (entry->selected) {
-	GtkTreePath *path = NULL;
-	GtkTreeIter iter;
-	double pos_info_scroll, pos_more_scroll;
+        GtkTreePath *path = NULL;
+        GtkTreeIter iter;
+        double pos_info_scroll;
+        double pos_detail_scroll;
 
-	/* save current position */
+        /* save current position */
 #if GTK_CHECK_VERSION(3, 0, 0)
-    /* TODO:GTK3 */
+        /* TODO:GTK3 */
 #else
-	pos_info_scroll = RANGE_GET_VALUE(info, vscrollbar);
-	pos_more_scroll = RANGE_GET_VALUE(moreinfo, vscrollbar);
+        pos_info_scroll = RANGE_GET_VALUE(info_tree, vscrollbar);
+        pos_detail_scroll = RANGE_GET_VALUE(detail_view, vscrollbar);
 #endif
 
-	/* avoid drawing the window while we reload */
+        /* avoid drawing the window while we reload */
 #if GTK_CHECK_VERSION(2, 14, 0)
-    gdk_window_freeze_updates(gdk_window);
+        gdk_window_freeze_updates(gdk_window);
 #else
-	gdk_window_freeze_updates(shell->window->window);
+        gdk_window_freeze_updates(shell->window->window);
 #endif
 
-	/* gets the current selected path */
-	if (gtk_tree_selection_get_selected
-	    (shell->info->selection, &shell->info->model, &iter)) {
-	    path = gtk_tree_model_get_path(shell->info->model, &iter);
+        /* gets the current selected path */
+        if (gtk_tree_selection_get_selected(shell->info_tree->selection,
+                                            &shell->info_tree->model, &iter)) {
+            path = gtk_tree_model_get_path(shell->info_tree->model, &iter);
         }
 
-	/* update the information, clear the treeview and populate it again */
-	module_entry_reload(entry);
-	info_selected_show_extra(NULL);	/* clears the more info store */
-	module_selected_show_info(entry, TRUE);
+        /* update the information, clear the treeview and populate it again */
+        module_entry_reload(entry);
+        detail_view_clear(shell->detail_view);
+        module_selected_show_info(entry, TRUE);
 
-	/* if there was a selection, reselect it */
-	if (path) {
-	    gtk_tree_selection_select_path(shell->info->selection, path);
-            gtk_tree_view_set_cursor(GTK_TREE_VIEW(shell->info->view), path, NULL,
-                                     FALSE);
-	    gtk_tree_path_free(path);
+        /* if there was a selection, reselect it */
+        if (path) {
+            gtk_tree_selection_select_path(shell->info_tree->selection, path);
+            gtk_tree_view_set_cursor(GTK_TREE_VIEW(shell->info_tree->view),
+                                     path, NULL, FALSE);
+            gtk_tree_path_free(path);
         } else {
             /* restore position */
 #if GTK_CHECK_VERSION(3, 0, 0)
-    /* TODO:GTK3 */
+            /* TODO:GTK3 */
 #else
-            RANGE_SET_VALUE(info, vscrollbar, pos_info_scroll);
-            RANGE_SET_VALUE(moreinfo, vscrollbar, pos_more_scroll);
+            RANGE_SET_VALUE(info_tree, vscrollbar, pos_info_scroll);
 #endif
         }
 
-	/* make the window drawable again */
+#if !GTK_CHECK_VERSION(3, 0, 0)
+        RANGE_SET_VALUE(detail_view, vscrollbar, pos_detail_scroll);
+#endif
+
+        /* make the window drawable again */
 #if GTK_CHECK_VERSION(2, 14, 0)
-    gdk_window_thaw_updates(gdk_window);
+        gdk_window_thaw_updates(gdk_window);
 #else
-	gdk_window_thaw_updates(shell->window->window);
+        gdk_window_thaw_updates(shell->window->window);
 #endif
     }
 
@@ -967,331 +1031,334 @@ static void set_view_type(ShellViewType viewtype, gboolean reload)
 #if GTK_CHECK_VERSION(2, 18, 0)
     GtkAllocation* alloc;
 #endif
+    gboolean type_changed = FALSE;
+    if (viewtype != shell->view_type)
+        type_changed = TRUE;
 
     if (viewtype < SHELL_VIEW_NORMAL || viewtype >= SHELL_VIEW_N_VIEWS)
-	viewtype = SHELL_VIEW_NORMAL;
+        viewtype = SHELL_VIEW_NORMAL;
 
     shell->normalize_percentage = TRUE;
     shell->view_type = viewtype;
     shell->_order_type = SHELL_ORDER_DESCENDING;
 
     /* use an unsorted tree model */
-    GtkTreeSortable *sortable = GTK_TREE_SORTABLE(shell->info->model);
+    GtkTreeSortable *sortable = GTK_TREE_SORTABLE(shell->info_tree->model);
 
     gtk_tree_sortable_set_sort_column_id(sortable,
         GTK_TREE_SORTABLE_UNSORTED_SORT_COLUMN_ID,
         GTK_SORT_ASCENDING);
-    gtk_tree_view_set_model(GTK_TREE_VIEW(shell->info->view),
+    gtk_tree_view_set_model(GTK_TREE_VIEW(shell->info_tree->view),
         GTK_TREE_MODEL(sortable));
 
     /* reset to the default view columns */
     if (!reload) {
-      gtk_tree_view_column_set_visible(shell->info->col_extra1, FALSE);
-      gtk_tree_view_column_set_visible(shell->info->col_extra2, FALSE);
-      gtk_tree_view_column_set_visible(shell->info->col_progress, FALSE);
-      gtk_tree_view_column_set_visible(shell->info->col_value, TRUE);
+      gtk_tree_view_column_set_visible(shell->info_tree->col_extra1, FALSE);
+      gtk_tree_view_column_set_visible(shell->info_tree->col_extra2, FALSE);
+      gtk_tree_view_column_set_visible(shell->info_tree->col_progress, FALSE);
+      gtk_tree_view_column_set_visible(shell->info_tree->col_value, TRUE);
     }
 
     /* turn off the rules hint */
 #if GTK_CHECK_VERSION(3, 0, 0)
 #else
-    gtk_tree_view_set_rules_hint(GTK_TREE_VIEW(shell->info->view), FALSE);
+    gtk_tree_view_set_rules_hint(GTK_TREE_VIEW(shell->info_tree->view), FALSE);
 #endif
 
     close_note(NULL, NULL);
+    detail_view_clear(shell->detail_view);
 
     switch (viewtype) {
     default:
     case SHELL_VIEW_NORMAL:
-        gtk_widget_show(shell->info->scroll);
-	gtk_widget_hide(shell->notebook);
+        gtk_widget_show(shell->info_tree->scroll);
+        gtk_widget_hide(shell->notebook);
 
-	if (!reload) {
-          gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(shell->info->view), FALSE);
+        if (!reload) {
+            gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(shell->info_tree->view), FALSE);
         }
-	break;
+        break;
     case SHELL_VIEW_DUAL:
-        gtk_widget_show(shell->info->scroll);
-        gtk_widget_show(shell->moreinfo->scroll);
-        gtk_notebook_set_current_page(GTK_NOTEBOOK(shell->notebook), 0);
+        gtk_widget_show(shell->info_tree->scroll);
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(shell->notebook), 1);
         gtk_widget_show(shell->notebook);
 
+        if (type_changed) {
 #if GTK_CHECK_VERSION(2, 18, 0)
-        alloc = g_new(GtkAllocation, 1);
-        gtk_widget_get_allocation(shell->hpaned, alloc);
-        gtk_paned_set_position(GTK_PANED(shell->vpaned), alloc->height / 2);
-        g_free(alloc);
+            alloc = g_new(GtkAllocation, 1);
+            gtk_widget_get_allocation(shell->hbox, alloc);
+            gtk_paned_set_position(GTK_PANED(shell->vpaned), alloc->height / 2);
+            g_free(alloc);
 #else
-    gtk_paned_set_position(GTK_PANED(shell->vpaned),
-                    shell->hpaned->allocation.height / 2);
+            gtk_paned_set_position(GTK_PANED(shell->vpaned),
+                            shell->hbox->allocation.height / 2);
 #endif
+        }
         break;
     case SHELL_VIEW_LOAD_GRAPH:
-        gtk_widget_show(shell->info->scroll);
-        gtk_notebook_set_current_page(GTK_NOTEBOOK(shell->notebook), 1);
+        gtk_widget_show(shell->info_tree->scroll);
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(shell->notebook), 0);
         gtk_widget_show(shell->notebook);
         load_graph_clear(shell->loadgraph);
 
+        if (type_changed) {
 #if GTK_CHECK_VERSION(2, 18, 0)
-        alloc = g_new(GtkAllocation, 1);
-        gtk_widget_get_allocation(shell->hpaned, alloc);
-        gtk_paned_set_position(GTK_PANED(shell->vpaned),
-                alloc->height - load_graph_get_height(shell->loadgraph) - 16);
-        g_free(alloc);
+            alloc = g_new(GtkAllocation, 1);
+            gtk_widget_get_allocation(shell->hbox, alloc);
+            gtk_paned_set_position(GTK_PANED(shell->vpaned),
+                    alloc->height - load_graph_get_height(shell->loadgraph) - 16);
+            g_free(alloc);
 #else
-    gtk_paned_set_position(GTK_PANED(shell->vpaned),
-			       shell->hpaned->allocation.height -
-			       load_graph_get_height(shell->loadgraph) - 16);
+            gtk_paned_set_position(GTK_PANED(shell->vpaned),
+                           shell->hbox->allocation.height -
+                           load_graph_get_height(shell->loadgraph) - 16);
 #endif
-
-	break;
+        }
+        break;
     case SHELL_VIEW_PROGRESS_DUAL:
 	gtk_widget_show(shell->notebook);
-        gtk_widget_show(shell->moreinfo->scroll);
 
-	gtk_notebook_set_current_page(GTK_NOTEBOOK(shell->notebook), 0);
+	gtk_notebook_set_current_page(GTK_NOTEBOOK(shell->notebook), 1);
 	/* fallthrough */
     case SHELL_VIEW_PROGRESS:
-        gtk_widget_show(shell->info->scroll);
+        gtk_widget_show(shell->info_tree->scroll);
 
 	if (!reload) {
-  	  gtk_tree_view_column_set_visible(shell->info->col_progress, TRUE);
-  	  gtk_tree_view_column_set_visible(shell->info->col_value, FALSE);
+         gtk_tree_view_column_set_visible(shell->info_tree->col_progress, TRUE);
+         gtk_tree_view_column_set_visible(shell->info_tree->col_value, FALSE);
         }
 
 	if (viewtype == SHELL_VIEW_PROGRESS)
 		gtk_widget_hide(shell->notebook);
 	break;
-    case SHELL_VIEW_SUMMARY:
-        gtk_notebook_set_current_page(GTK_NOTEBOOK(shell->notebook), 2);
+    case SHELL_VIEW_DETAIL:
+        gtk_notebook_set_current_page(GTK_NOTEBOOK(shell->notebook), 1);
 
         gtk_widget_show(shell->notebook);
-        gtk_widget_hide(shell->info->scroll);
-        gtk_widget_hide(shell->moreinfo->scroll);
+        gtk_widget_hide(shell->info_tree->scroll);
     }
 }
 
-static void
-group_handle_special(GKeyFile * key_file, ShellModuleEntry * entry,
-		     gchar * group, gchar ** keys, gboolean reload)
+static void group_handle_special(GKeyFile *key_file,
+                                 ShellModuleEntry *entry,
+                                 const gchar *group,
+                                 gchar **keys)
 {
-    if (g_str_equal(group, "$ShellParam$")) {
-        gboolean headers_visible = FALSE;
-	gint i;
+    if (!g_str_equal(group, "$ShellParam$")) {
+        g_warning("Unknown parameter group: ``%s''", group);
+        return;
+    }
 
-	for (i = 0; keys[i]; i++) {
-	    gchar *key = keys[i];
+    gboolean headers_visible = FALSE;
+    gint i;
 
-	    if (g_str_has_prefix(key, "UpdateInterval")) {
-		ShellFieldUpdate *fu = g_new0(ShellFieldUpdate, 1);
-		ShellFieldUpdateSource *sfutbl;
-		gint ms;
+    for (i = 0; keys[i]; i++) {
+        gchar *key = keys[i];
 
-		ms = g_key_file_get_integer(key_file, group, key, NULL);
+        if (g_str_has_prefix(key, "UpdateInterval$")) {
+            ShellFieldUpdate *fu = g_new0(ShellFieldUpdate, 1);
+            ShellFieldUpdateSource *sfutbl;
+            gint ms;
 
-		fu->field_name = g_strdup(g_utf8_strchr(key, -1, '$') + 1);
-		fu->entry = entry;
+            ms = g_key_file_get_integer(key_file, group, key, NULL);
 
-		sfutbl = g_new0(ShellFieldUpdateSource, 1);
-		sfutbl->source_id = g_timeout_add(ms, update_field, fu);
-		sfutbl->sfu = fu;
+            /* Old style used just the label which has to be checked by translating it,
+             * and potentially could by ambiguous.
+             * New style can use tag or label. If new style including a tag,
+             * send both tag and label and let the hi_get_field() function use
+             * key_get_components() to split it. */
+            const gchar *chk = g_utf8_strchr(key, -1, '$');
+            fu->field_name = g_strdup(key_is_flagged(chk) ? chk : chk + 1);
+            fu->entry = entry;
 
-		update_sfusrc = g_slist_prepend(update_sfusrc, sfutbl);
-	    } else if (g_str_equal(key, "NormalizePercentage")) {
-		shell->normalize_percentage = g_key_file_get_boolean(key_file, group, key, NULL);
-	    } else if (g_str_equal(key, "LoadGraphSuffix")) {
-		gchar *suffix =
-		    g_key_file_get_value(key_file, group, key, NULL);
-		load_graph_set_data_suffix(shell->loadgraph, suffix);
-		g_free(suffix);
-	    } else if (g_str_equal(key, "ReloadInterval")) {
-		gint ms;
+            sfutbl = g_new0(ShellFieldUpdateSource, 1);
+            sfutbl->source_id = g_timeout_add(ms, update_field, fu);
+            sfutbl->sfu = fu;
 
-		ms = g_key_file_get_integer(key_file, group, key, NULL);
+            update_sfusrc = g_slist_prepend(update_sfusrc, sfutbl);
+        } else if (g_str_equal(key, "NormalizePercentage")) {
+            shell->normalize_percentage =
+                g_key_file_get_boolean(key_file, group, key, NULL);
+        } else if (g_str_equal(key, "LoadGraphSuffix")) {
+            gchar *suffix = g_key_file_get_value(key_file, group, key, NULL);
+            load_graph_set_data_suffix(shell->loadgraph, suffix);
+            g_free(suffix);
+        } else if (g_str_equal(key, "ReloadInterval")) {
+            gint ms;
 
-		g_timeout_add(ms, reload_section, entry);
-	    } else if (g_str_equal(key, "RescanInterval")) {
-		gint ms;
+            ms = g_key_file_get_integer(key_file, group, key, NULL);
 
-		ms = g_key_file_get_integer(key_file, group, key, NULL);
+            g_timeout_add(ms, reload_section, entry);
+        } else if (g_str_equal(key, "RescanInterval")) {
+            gint ms;
 
-		g_timeout_add(ms, rescan_section, entry);
-	    } else if (g_str_equal(key, "ShowColumnHeaders")) {
-		headers_visible = g_key_file_get_boolean(key_file, group, key, NULL);
-	    } else if (g_str_has_prefix(key, "ColumnTitle")) {
-                GtkTreeViewColumn *column = NULL;
-		gchar *value, *title = g_utf8_strchr(key, -1, '$') + 1;
+            ms = g_key_file_get_integer(key_file, group, key, NULL);
 
-                value = g_key_file_get_value(key_file, group, key, NULL);
+            g_timeout_add(ms, rescan_section, entry);
+        } else if (g_str_equal(key, "ShowColumnHeaders")) {
+            headers_visible =
+                g_key_file_get_boolean(key_file, group, key, NULL);
+        } else if (g_str_has_prefix(key, "ColumnTitle")) {
+            GtkTreeViewColumn *column = NULL;
+            gchar *value, *title = g_utf8_strchr(key, -1, '$') + 1;
 
-                if (g_str_equal(title, "Extra1")) {
-			column = shell->info->col_extra1;
-                } else if (g_str_equal(title, "Extra2")) {
-			column = shell->info->col_extra2;
-                } else if (g_str_equal(title, "Value")) {
-			column = shell->info->col_value;
-                } else if (g_str_equal(title, "TextValue")) {
-			column = shell->info->col_textvalue;
-                } else if (g_str_equal(title, "Progress")) {
-			column = shell->info->col_progress;
+            value = g_key_file_get_value(key_file, group, key, NULL);
+
+            if (g_str_equal(title, "Extra1")) {
+                column = shell->info_tree->col_extra1;
+            } else if (g_str_equal(title, "Extra2")) {
+                column = shell->info_tree->col_extra2;
+            } else if (g_str_equal(title, "Value")) {
+                column = shell->info_tree->col_value;
+            } else if (g_str_equal(title, "TextValue")) {
+                column = shell->info_tree->col_textvalue;
+            } else if (g_str_equal(title, "Progress")) {
+                column = shell->info_tree->col_progress;
+            }
+
+            if (column) {
+                gtk_tree_view_column_set_title(column, value);
+                gtk_tree_view_column_set_visible(column, TRUE);
+            }
+
+            g_free(value);
+        } else if (g_str_equal(key, "OrderType")) {
+            shell->_order_type =
+                g_key_file_get_integer(key_file, group, key, NULL);
+        } else if (g_str_has_prefix(key, "Icon$")) {
+            struct UpdateTableItem *item;
+
+            const gchar *ikey = g_utf8_strchr(key, -1, '$');
+            gchar *tag, *name;
+            key_get_components(ikey, NULL, &tag, &name, NULL, NULL, TRUE);
+
+            if (tag)
+                item = g_hash_table_lookup(update_tbl, tag);
+             else
+                item = g_hash_table_lookup(update_tbl, name);
+            g_free(name);
+            g_free(tag);
+
+            if (item) {
+                gchar *file = g_key_file_get_value(key_file, group, key, NULL);
+                GdkPixbuf *pixbuf = icon_cache_get_pixbuf_at_size(file, 22, 22);
+
+                g_free(file);
+
+                if (item->is_iter) {
+                    gtk_tree_store_set(
+                        GTK_TREE_STORE(shell->info_tree->model), item->iter,
+                        INFO_TREE_COL_PBUF, pixbuf, -1);
+                } else {
+                    GList *children = gtk_container_get_children(GTK_CONTAINER(item->widget));
+                    gtk_image_set_from_pixbuf(GTK_IMAGE(children->data), pixbuf);
+                    gtk_widget_show(GTK_WIDGET(children->data));
+                    g_list_free(children);
                 }
-
-                if (column) {
-                  gtk_tree_view_column_set_title(column, value);
-                  gtk_tree_view_column_set_visible(column, TRUE);
-                }
-
-                g_free(value);
-	    } else if (g_str_equal(key, "OrderType")) {
-		shell->_order_type = g_key_file_get_integer(key_file,
-							    group,
-							    key, NULL);
-	    } else if (g_str_equal(key, "ViewType")) {
-		set_view_type(g_key_file_get_integer(key_file, group,
-						     key, NULL), reload);
-	    } else if (g_str_has_prefix(key, "Icon")) {
-		GtkTreeIter *iter = g_hash_table_lookup(update_tbl,
-							g_utf8_strchr(key,
-							       -1, '$') + 1);
-
-		if (iter) {
-		    gchar *file =
-			g_key_file_get_value(key_file, group, key, NULL);
-		    gtk_tree_store_set(GTK_TREE_STORE(shell->info->model),
-				       iter, INFO_TREE_COL_PBUF,
-				       icon_cache_get_pixbuf_at_size(file,
-								     22,
-								     22),
-				       -1);
-		    g_free(file);
-		}
-	    } else if (g_str_equal(key, "Zebra")) {
+            }
+        } else if (g_str_equal(key, "Zebra")) {
 #if GTK_CHECK_VERSION(3, 0, 0)
 #else
-		gtk_tree_view_set_rules_hint(GTK_TREE_VIEW
-					     (shell->info->view),
-					     g_key_file_get_boolean
-					     (key_file, group, key, NULL));
+            gtk_tree_view_set_rules_hint(
+                GTK_TREE_VIEW(shell->info_tree->view),
+                g_key_file_get_boolean(key_file, group, key, NULL));
 #endif
-	    }
-	}
-
-        gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(shell->info->view), headers_visible);
-    } else {
-	g_warning("Unknown parameter group: ``%s''", group);
+        }
     }
+
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(shell->info_tree->view),
+                                      headers_visible);
 }
 
-static void
-group_handle_normal(GKeyFile * key_file, ShellModuleEntry * entry,
-		    gchar * group, gchar ** keys, gsize ngroups)
+static void group_handle_normal(GKeyFile *key_file,
+                                ShellModuleEntry *entry,
+                                const gchar *group,
+                                gchar **keys,
+                                gsize ngroups)
 {
     GtkTreeIter parent;
-    GtkTreeStore *store = GTK_TREE_STORE(shell->info->model);
-    gchar *tmp = g_strdup(group);
+    GtkTreeStore *store = GTK_TREE_STORE(shell->info_tree->model);
     gint i;
 
     if (ngroups > 1) {
-	gtk_tree_store_append(store, &parent, NULL);
+        gtk_tree_store_append(store, &parent, NULL);
 
-	strend(tmp, '#');
-	gtk_tree_store_set(store, &parent, INFO_TREE_COL_NAME, tmp, -1);
-	g_free(tmp);
+        gchar *tmp = g_strdup(group);
+        strend(tmp, '#');
+        gtk_tree_store_set(store, &parent, INFO_TREE_COL_NAME, tmp, -1);
+        g_free(tmp);
     }
+
+    g_key_file_set_list_separator(key_file, '|');
 
     for (i = 0; keys[i]; i++) {
-	gchar *key = keys[i];
-	gchar *value;
-	GtkTreeIter child;
+        gchar *key = keys[i];
+        gchar **values;
+        gsize vcount = 0;
+        GtkTreeIter child;
 
-    value = g_key_file_get_value(key_file, group, key, NULL);
-    if (entry->fieldfunc && value && g_str_equal(value, "...")) {
-        g_free(value);
-        value = entry->fieldfunc(key);
-    }
+        values = g_key_file_get_string_list(key_file, group, key, &vcount, NULL);
+        if (!vcount) {
+            /* Check for empty value */
+            values = g_new0(gchar*, 2);
+            values[0] = g_key_file_get_string(key_file, group, key, NULL);
+            if (values[0]) {
+                vcount = 1;
+            } else {
+                g_strfreev(values);
+                continue;
+            }
+        }
 
-	if ((key && value) && g_utf8_validate(key, -1, NULL) && g_utf8_validate(value, -1, NULL)) {
-	    if (ngroups == 1) {
-		gtk_tree_store_append(store, &child, NULL);
-	    } else {
-		gtk_tree_store_append(store, &child, &parent);
-	    }
+        if (entry->fieldfunc && values[0] && g_str_equal(values[0], "...")) {
+            g_free(values[0]);
+            values[0] = entry->fieldfunc(key);
+        }
 
-	    /* FIXME: use g_key_file_get_string_list? */
-	    if (g_utf8_strchr(value, -1, '|')) {
-		gchar **columns = g_strsplit(value, "|", 0);
+        if (ngroups == 1) {
+            gtk_tree_store_append(store, &child, NULL);
+        } else {
+            gtk_tree_store_append(store, &child, &parent);
+        }
 
-		gtk_tree_store_set(store, &child, INFO_TREE_COL_VALUE, columns[0], -1);
-		if (columns[1]) {
-			gtk_tree_store_set(store, &child, INFO_TREE_COL_EXTRA1, columns[1], -1);
-			if (columns[2]) {
-				gtk_tree_store_set(store, &child, INFO_TREE_COL_EXTRA2, columns[2], -1);
-			}
-		}
+        if (vcount > 0)
+            gtk_tree_store_set(store, &child, INFO_TREE_COL_VALUE,
+                               values[0], -1);
+        if (vcount > 1)
+            gtk_tree_store_set(store, &child, INFO_TREE_COL_EXTRA1,
+                               values[1], -1);
+        if (vcount > 2)
+            gtk_tree_store_set(store, &child, INFO_TREE_COL_EXTRA2,
+                               values[2], -1);
 
-		g_strfreev(columns);
-	    } else {
-	    	gtk_tree_store_set(store, &child, INFO_TREE_COL_VALUE, value, -1);
-	    }
+        struct UpdateTableItem *item = g_new0(struct UpdateTableItem, 1);
+        item->is_iter = TRUE;
+        item->iter = gtk_tree_iter_copy(&child);
+        gchar *flags, *tag, *name, *label;
+        key_get_components(key, &flags, &tag, &name, &label, NULL, TRUE);
 
-	    strend(key, '#');
+        if (flags) {
+            //TODO: name was formerly used where label is here. Check all uses
+            //for problems.
+            gtk_tree_store_set(store, &child, INFO_TREE_COL_NAME, label,
+                               INFO_TREE_COL_DATA, flags, -1);
+            g_hash_table_insert(update_tbl, tag, item);
+            g_free(label);
+        } else {
+            gtk_tree_store_set(store, &child, INFO_TREE_COL_NAME, key,
+                               INFO_TREE_COL_DATA, NULL, -1);
+            g_hash_table_insert(update_tbl, name, item);
+            g_free(tag);
+        }
+        g_free(flags);
 
-	    if (*key == '$') {
-		gchar **tmp;
-
-		tmp = g_strsplit(++key, "$", 0);
-
-		gtk_tree_store_set(store, &child, INFO_TREE_COL_NAME,
-				   tmp[1], INFO_TREE_COL_DATA, tmp[0], -1);
-
-		g_strfreev(tmp);
-	    } else {
-		gtk_tree_store_set(store, &child, INFO_TREE_COL_NAME, _(key),
-				   INFO_TREE_COL_DATA, NULL, -1);
-	    }
-
-	    g_hash_table_insert(update_tbl, g_strdup(key),
-				gtk_tree_iter_copy(&child));
-
-	}
-
-	g_free(value);
-    }
-}
-
-static void
-moreinfo_handle_normal(GKeyFile * key_file, gchar * group, gchar ** keys)
-{
-    GtkTreeIter parent;
-    GtkTreeStore *store = GTK_TREE_STORE(shell->moreinfo->model);
-    gint i;
-
-    gtk_tree_store_append(store, &parent, NULL);
-    gtk_tree_store_set(store, &parent, INFO_TREE_COL_NAME, group, -1);
-
-    for (i = 0; keys[i]; i++) {
-	gchar *key = keys[i];
-	GtkTreeIter child;
-	gchar *value;
-
-	value = g_key_file_get_value(key_file, group, key, NULL);
-
-	if (g_utf8_validate(key, -1, NULL)
-	    && g_utf8_validate(value, -1, NULL)) {
-	    strend(key, '#');
-
-	    gtk_tree_store_append(store, &child, &parent);
-	    gtk_tree_store_set(store, &child, INFO_TREE_COL_VALUE,
-			       value, INFO_TREE_COL_NAME, key, -1);
-	}
-
-	g_free(value);
+        g_strfreev(values);
     }
 }
 
 static void update_progress()
 {
-    GtkTreeModel *model = shell->info->model;
+    GtkTreeModel *model = shell->info_tree->model;
     GtkTreeStore *store = GTK_TREE_STORE(model);
     GtkTreeIter iter, fiter;
     gchar *tmp;
@@ -1354,13 +1421,13 @@ static void update_progress()
     } while (gtk_tree_model_iter_next(model, &iter));
 
     /* now sort everything up. that wasn't as hard as i thought :) */
-    GtkTreeSortable *sortable = GTK_TREE_SORTABLE(shell->info->model);
+    GtkTreeSortable *sortable = GTK_TREE_SORTABLE(shell->info_tree->model);
 
     gtk_tree_sortable_set_sort_func(sortable, INFO_TREE_COL_VALUE,
 				    info_tree_compare_val_func, 0, NULL);
     gtk_tree_sortable_set_sort_column_id(sortable, INFO_TREE_COL_VALUE,
 					 GTK_SORT_DESCENDING);
-    gtk_tree_view_set_model(GTK_TREE_VIEW(shell->info->view),
+    gtk_tree_view_set_model(GTK_TREE_VIEW(shell->info_tree->view),
 			    GTK_TREE_MODEL(sortable));
 }
 
@@ -1404,132 +1471,289 @@ select_first_item(gpointer data)
 {
     GtkTreeIter first;
 
-    if (gtk_tree_model_get_iter_first(shell->info->model, &first))
-        gtk_tree_selection_select_iter(shell->info->selection, &first);
+    if (gtk_tree_model_get_iter_first(shell->info_tree->model, &first))
+        gtk_tree_selection_select_iter(shell->info_tree->selection, &first);
 
     return FALSE;
 }
 
-static gboolean
-select_marked_or_first_item(gpointer data)
+static gboolean select_marked_or_first_item(gpointer data)
 {
     GtkTreeIter first, it;
     gboolean found_selection = FALSE;
     gchar *datacol;
 
-    if ( gtk_tree_model_get_iter_first(shell->info->model, &first) ) {
+    if (gtk_tree_model_get_iter_first(shell->info_tree->model, &first)) {
         it = first;
-        while ( gtk_tree_model_iter_next(shell->info->model, &it) ) {
-            gtk_tree_model_get(shell->info->model, &it, INFO_TREE_COL_DATA, &datacol, -1);
-            if (datacol != NULL && *datacol == '*') {
-                gtk_tree_selection_select_iter(shell->info->selection, &it);
+        while (gtk_tree_model_iter_next(shell->info_tree->model, &it)) {
+            gtk_tree_model_get(shell->info_tree->model, &it, INFO_TREE_COL_DATA,
+                               &datacol, -1);
+            if (key_is_highlighted(datacol)) {
+                gtk_tree_selection_select_iter(shell->info_tree->selection,
+                                               &it);
                 found_selection = TRUE;
             }
             g_free(datacol);
         }
 
         if (!found_selection)
-            gtk_tree_selection_select_iter(shell->info->selection, &first);
+            gtk_tree_selection_select_iter(shell->info_tree->selection, &first);
     }
     return FALSE;
 }
 
-static void
-module_selected_show_info(ShellModuleEntry * entry, gboolean reload)
+static void module_selected_show_info_list(GKeyFile *key_file,
+                                           ShellModuleEntry *entry,
+                                           gchar **groups,
+                                           gsize ngroups)
 {
-    GKeyFile *key_file = g_key_file_new();
-    GtkTreeStore *store;
-    gchar *key_data, **groups;
-    gboolean has_shell_param = FALSE;
+    GtkTreeStore *store = GTK_TREE_STORE(shell->info_tree->model);
     gint i;
-    gsize ngroups;
-#if GTK_CHECK_VERSION(2, 14, 0)
-    GdkWindow *gdk_window = gtk_widget_get_window(GTK_WIDGET(shell->info->view));
+
+    gtk_tree_store_clear(store);
+
+    g_object_ref(shell->info_tree->model);
+    gtk_tree_view_set_model(GTK_TREE_VIEW(shell->info_tree->view), NULL);
+
+    gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(shell->info_tree->view),
+                                      FALSE);
+
+    for (i = 0; groups[i]; i++) {
+        gchar **keys = g_key_file_get_keys(key_file, groups[i], NULL, NULL);
+
+        if (groups[i][0] == '$') {
+            group_handle_special(key_file, entry, groups[i], keys);
+        } else {
+            group_handle_normal(key_file, entry, groups[i], keys, ngroups);
+        }
+
+        g_strfreev(keys);
+    }
+
+    g_object_unref(shell->info_tree->model);
+    gtk_tree_view_set_model(GTK_TREE_VIEW(shell->info_tree->view),
+                            shell->info_tree->model);
+    gtk_tree_view_expand_all(GTK_TREE_VIEW(shell->info_tree->view));
+    gtk_tree_view_set_show_expanders(GTK_TREE_VIEW(shell->info_tree->view),
+                                     ngroups > 1);
+}
+
+static gboolean detail_activate_link (GtkLabel *label, gchar *uri, gpointer user_data) {
+    return uri_open(uri);
+}
+
+static gchar *vendor_info_markup(const Vendor *v) {
+    if (!v) return NULL;
+    gchar *ven_mt = NULL;
+    gchar *full_link = NULL, *p = NULL;
+    gchar *ven_tag = v->name_short ? g_strdup(v->name_short) : g_strdup(v->name);
+    tag_vendor(&ven_tag, 0, ven_tag, v->ansi_color, FMT_OPT_PANGO);
+    //if (v->name_short)
+    //    ven_mt = appf(ven_mt, "\n", "%s", v->name);
+    ven_mt = appf(ven_mt, "\n", "%s", ven_tag);
+    if (v->url) {
+        if (!g_str_has_prefix(v->url, "http") )
+            full_link = g_strdup_printf("http://%s", v->url);
+        ven_mt = appf(ven_mt, "\n", "<b>%s:</b> <a href=\"%s\">%s</a>", _("URL"), full_link ? full_link : v->url, v->url);
+        g_free(full_link);
+        full_link = NULL;
+    }
+    if (v->url_support) {
+        if (!g_str_has_prefix(v->url_support, "http") )
+            full_link = g_strdup_printf("http://%s", v->url_support);
+        ven_mt = appf(ven_mt, "\n", "<b>%s:</b> <a href=\"%s\">%s</a>", _("Support URL"), full_link ? full_link : v->url_support, v->url_support);
+        g_free(full_link);
+        full_link = NULL;
+    }
+    if (v->wikipedia) {
+        /* sending the title to wikipedia.com/wiki will autmatically handle the language and section parts,
+         * but perhaps that shouldn't be relied on so much? */
+        full_link = g_strdup_printf("http://wikipedia.com/wiki/%s", v->wikipedia);
+        for(p = full_link; *p; p++) {
+            if (*p == ' ') *p = '_';
+        }
+        ven_mt = appf(ven_mt, "\n", "<b>%s:</b> <a href=\"%s\">%s</a>", _("Wikipedia"), full_link ? full_link : v->wikipedia, v->wikipedia);
+        g_free(full_link);
+        full_link = NULL;
+    }
+    g_free(ven_tag);
+    return ven_mt;
+}
+
+static void module_selected_show_info_detail(GKeyFile *key_file,
+                                             ShellModuleEntry *entry,
+                                             gchar **groups)
+{
+    gint i;
+
+    detail_view_clear(shell->detail_view);
+
+    for (i = 0; groups[i]; i++) {
+        gsize nkeys;
+        gchar **keys = g_key_file_get_keys(key_file, groups[i], &nkeys, NULL);
+        gchar *group_label = g_strdup(groups[i]);
+        strend(group_label, '#');
+
+        if (entry && groups[i][0] == '$') {
+            group_handle_special(key_file, entry, groups[i], keys);
+        } else {
+            gchar *tmp = g_strdup_printf("<b>%s</b>", group_label);
+            GtkWidget *label = gtk_label_new(tmp);
+            gtk_label_set_use_markup(GTK_LABEL(label), TRUE);
+            GtkWidget *frame = gtk_frame_new(NULL);
+            gtk_frame_set_label_widget(GTK_FRAME(frame), label);
+            gtk_frame_set_shadow_type(GTK_FRAME(frame), GTK_SHADOW_NONE);
+            g_free(tmp);
+
+            gtk_container_set_border_width(GTK_CONTAINER(frame), 6);
+            gtk_box_pack_start(GTK_BOX(shell->detail_view->view), frame, FALSE,
+                               FALSE, 0);
+
+            GtkWidget *table = gtk_table_new(nkeys, 2, FALSE);
+            gtk_container_set_border_width(GTK_CONTAINER(table), 4);
+            gtk_container_add(GTK_CONTAINER(frame), table);
+
+            gint j, a = 0;
+            for (j = 0; keys[j]; j++) {
+                gchar *key_markup;
+                gchar *value;
+                gchar *name, *label, *tag, *flags;
+                key_get_components(keys[j], &flags, &tag, &name, &label, NULL, TRUE);
+
+                value = g_key_file_get_string(key_file, groups[i], keys[j], NULL);
+
+                if (entry && entry->fieldfunc && value && g_str_equal(value, "...")) {
+                    g_free(value);
+                    value = entry->fieldfunc(keys[j]);
+                }
+
+                gboolean has_ven = key_value_has_vendor_string(flags);
+                const Vendor *v = has_ven ? vendor_match(value, NULL) : NULL;
+
+                key_markup =
+                    g_strdup_printf("<span color=\"#666\">%s</span>", label);
+
+                GtkWidget *key_label = gtk_label_new(key_markup);
+                gtk_label_set_use_markup(GTK_LABEL(key_label), TRUE);
+                gtk_misc_set_alignment(GTK_MISC(key_label), 1.0f, 0.5f);
+
+                GtkWidget *value_label = gtk_label_new(value);
+                gtk_label_set_use_markup(GTK_LABEL(value_label), TRUE);
+                gtk_label_set_selectable(GTK_LABEL(value_label), TRUE);
+#if !GTK_CHECK_VERSION(3, 0, 0)
+                gtk_label_set_line_wrap(GTK_LABEL(value_label), TRUE);
 #endif
+                gtk_misc_set_alignment(GTK_MISC(value_label), 0.0f, 0.5f);
+
+                GtkWidget *value_icon = gtk_image_new();
+
+                GtkWidget *value_box = gtk_hbox_new(FALSE, 4);
+                gtk_box_pack_start(GTK_BOX(value_box), value_icon, FALSE, FALSE, 0);
+                gtk_box_pack_start(GTK_BOX(value_box), value_label, TRUE, TRUE, 0);
+
+                g_signal_connect(key_label, "activate-link", G_CALLBACK(detail_activate_link), NULL);
+                g_signal_connect(value_label, "activate-link", G_CALLBACK(detail_activate_link), NULL);
+
+                gtk_widget_show(key_label);
+                gtk_widget_show(value_box);
+                gtk_widget_show(value_label);
+
+                gtk_table_attach(GTK_TABLE(table), key_label, 0, 1, j + a, j + a + 1,
+                                 GTK_FILL, GTK_FILL, 6, 4);
+                gtk_table_attach(GTK_TABLE(table), value_box, 1, 2, j + a, j + a + 1,
+                                 GTK_FILL | GTK_EXPAND, GTK_FILL, 0, 4);
+
+                if (v) {
+                    a++; /* insert a row */
+                    gchar *vendor_markup = vendor_info_markup(v);
+                    GtkWidget *vendor_label = gtk_label_new(vendor_markup);
+                    gtk_label_set_use_markup(GTK_LABEL(vendor_label), TRUE);
+                    gtk_label_set_selectable(GTK_LABEL(vendor_label), TRUE);
+                    gtk_misc_set_alignment(GTK_MISC(vendor_label), 0.0f, 0.5f);
+                    g_signal_connect(vendor_label, "activate-link", G_CALLBACK(detail_activate_link), NULL);
+                    GtkWidget *vendor_box = gtk_hbox_new(FALSE, 4);
+                    gtk_box_pack_start(GTK_BOX(vendor_box), vendor_label, TRUE, TRUE, 0);
+                    gtk_table_attach(GTK_TABLE(table), vendor_box, 1, 2, j + a, j + a + 1,
+                                     GTK_FILL | GTK_EXPAND, GTK_FILL, 0, 4);
+                    gtk_widget_show(vendor_box);
+                    gtk_widget_show(vendor_label);
+                    g_free(vendor_markup);
+                }
+
+                struct UpdateTableItem *item = g_new0(struct UpdateTableItem, 1);
+                item->is_iter = FALSE;
+                item->widget = g_object_ref(value_box);
+
+                if (tag) {
+                    g_hash_table_insert(update_tbl, tag, item);
+                    g_free(name);
+                } else {
+                    g_hash_table_insert(update_tbl, name, item);
+                    g_free(tag);
+                }
+
+                g_free(flags);
+                g_free(value);
+                g_free(key_markup);
+                g_free(label);
+            }
+
+            gtk_widget_show(table);
+            gtk_widget_show(label);
+            gtk_widget_show(frame);
+        }
+
+        g_strfreev(keys);
+        g_free(group_label);
+    }
+}
+
+static void
+module_selected_show_info(ShellModuleEntry *entry, gboolean reload)
+{
+    GdkWindow *gdk_window = gtk_widget_get_window(GTK_WIDGET(shell->info_tree->view));
+    gsize ngroups;
+    gint i;
+
+    gdk_window_freeze_updates(gdk_window);
 
     module_entry_scan(entry);
-    key_data = module_entry_function(entry);
-
-    /* */
-#if GTK_CHECK_VERSION(2, 14, 0)
-	gdk_window_freeze_updates(gdk_window);
-#else
-    gdk_window_freeze_updates(shell->info->view->window);
-#endif
-
-    g_object_ref(shell->info->model);
-    gtk_tree_view_set_model(GTK_TREE_VIEW(shell->info->view), NULL);
-
-    /* reset the view type to normal */
-    set_view_type(SHELL_VIEW_NORMAL, reload);
-
     if (!reload) {
         /* recreate the iter hash table */
         h_hash_table_remove_all(update_tbl);
     }
-
     shell_clear_field_updates();
 
-    store = GTK_TREE_STORE(shell->info->model);
+    GKeyFile *key_file = g_key_file_new();
+    gchar *key_data = module_entry_function(entry);
 
-    gtk_tree_store_clear(store);
+    g_key_file_load_from_data(key_file, key_data, strlen(key_data), 0, NULL);
+    set_view_type(g_key_file_get_integer(key_file, "$ShellParam$",
+                                         "ViewType", NULL), reload);
 
-    g_key_file_load_from_data(key_file, key_data, strlen(key_data), 0,
-			      NULL);
-    groups = g_key_file_get_groups(key_file, &ngroups);
-
-    for (i = 0; groups[i]; i++)
-	if (groups[i][0] == '$')
-	    ngroups--;
+    gchar **groups = g_key_file_get_groups(key_file, &ngroups);
 
     for (i = 0; groups[i]; i++) {
-	gchar *group = groups[i];
-	gchar **keys = g_key_file_get_keys(key_file, group, NULL, NULL);
-
-	if (*group == '$') {
-	    group_handle_special(key_file, entry, group, keys, reload);
-	    has_shell_param = TRUE;
-	} else {
-	    group_handle_normal(key_file, entry, group, keys, ngroups);
-	}
-
-	g_strfreev(keys);
+	if (groups[i][0] == '$')
+	    ngroups--;
     }
 
-    /* */
-    if (!has_shell_param) {
-        gtk_tree_view_set_headers_visible(GTK_TREE_VIEW(shell->info->view), FALSE);
-    }
-
-    /* */
-    g_object_unref(shell->info->model);
-    gtk_tree_view_set_model(GTK_TREE_VIEW(shell->info->view), shell->info->model);
-    gtk_tree_view_expand_all(GTK_TREE_VIEW(shell->info->view));
-
-#if GTK_CHECK_VERSION(2, 14, 0)
-	gdk_window_thaw_updates(gdk_window);
-#else
-    gdk_window_thaw_updates(shell->info->view->window);
-#endif
-    shell_set_note_from_entry(entry);
-
-    if (shell->view_type == SHELL_VIEW_PROGRESS || shell->view_type == SHELL_VIEW_PROGRESS_DUAL) {
-	update_progress();
-    }
-
-#if GTK_CHECK_VERSION(2,12,0)
-    if (ngroups == 1) {
-        gtk_tree_view_set_show_expanders(GTK_TREE_VIEW(shell->info->view),
-                                         FALSE);
+    if (shell->view_type == SHELL_VIEW_DETAIL) {
+        module_selected_show_info_detail(key_file, entry, groups);
     } else {
-        gtk_tree_view_set_show_expanders(GTK_TREE_VIEW(shell->info->view),
-                                         TRUE);
+        module_selected_show_info_list(key_file, entry, groups, ngroups);
     }
-#endif
 
     g_strfreev(groups);
     g_key_file_free(key_file);
     g_free(key_data);
+
+    switch (shell->view_type) {
+    case SHELL_VIEW_PROGRESS_DUAL:
+    case SHELL_VIEW_PROGRESS:
+        update_progress();
+        break;
+    }
 
     if (!reload) {
         switch (shell->view_type) {
@@ -1539,48 +1763,31 @@ module_selected_show_info(ShellModuleEntry * entry, gboolean reload)
             g_idle_add(select_marked_or_first_item, NULL);
         }
     }
+    shell_set_note_from_entry(entry);
+
+    gdk_window_thaw_updates(gdk_window);
 }
 
-static void info_selected_show_extra(gchar * data)
+static void info_selected_show_extra(const gchar *tag)
 {
-    GtkTreeStore *store;
+    if (!tag || !shell->selected->morefunc)
+        return;
 
-    store = GTK_TREE_STORE(shell->moreinfo->model);
-    gtk_tree_store_clear(store);
+    GKeyFile *key_file = g_key_file_new();
+    gchar *key_data = shell->selected->morefunc((gchar *)tag);
+    gchar **groups;
 
-    if (!shell->selected->morefunc)
-	return;
+    g_key_file_load_from_data(key_file, key_data, strlen(key_data), 0, NULL);
+    groups = g_key_file_get_groups(key_file, NULL);
 
-    if (data) {
-        /* skip the select marker */
-        if (*data == '*')
-            data++;
-	GKeyFile *key_file = g_key_file_new();
-	gchar *key_data = shell->selected->morefunc(data);
-	gchar **groups;
-	gint i;
+    module_selected_show_info_detail(key_file, NULL, groups);
 
-	g_key_file_load_from_data(key_file, key_data, strlen(key_data), 0,
-				  NULL);
-	groups = g_key_file_get_groups(key_file, NULL);
-
-	for (i = 0; groups[i]; i++) {
-	    gchar *group = groups[i];
-	    gchar **keys =
-		g_key_file_get_keys(key_file, group, NULL, NULL);
-
-	    moreinfo_handle_normal(key_file, group, keys);
-	}
-
-	gtk_tree_view_expand_all(GTK_TREE_VIEW(shell->moreinfo->view));
-
-	g_strfreev(groups);
-	g_key_file_free(key_file);
-	g_free(key_data);
-    }
+    g_strfreev(groups);
+    g_key_file_free(key_file);
+    g_free(key_data);
 }
 
-static gchar *shell_summary_clear_value(gchar *value)
+static gchar *detail_view_clear_value(gchar *value)
 {
      GKeyFile *keyfile;
      gchar *return_value;
@@ -1630,83 +1837,66 @@ static gchar *shell_summary_clear_value(gchar *value)
      return g_strstrip(return_value);
 }
 
-static void shell_summary_add_item(ShellSummary *summary,
-                                   gchar *icon,
-                                   gchar *name,
-                                   gchar *value)
+static void detail_view_add_item(DetailView *detail_view,
+                                 gchar *icon,
+                                 gchar *name,
+                                 gchar *value)
 {
-     GtkWidget *frame;
-     GtkWidget *frame_label_box;
-     GtkWidget *frame_image;
-     GtkWidget *frame_label;
-     GtkWidget *content;
-     GtkWidget *alignment;
-     gchar *temp;
+    GtkWidget *frame;
+    GtkWidget *frame_label_box;
+    GtkWidget *frame_image;
+    GtkWidget *frame_label;
+    GtkWidget *content;
+    GtkWidget *alignment;
+    gchar *temp;
 
-     temp = shell_summary_clear_value(value);
+    temp = detail_view_clear_value(value);
 
-     /* creates the frame */
-     frame = gtk_frame_new(NULL);
-     gtk_frame_set_shadow_type(GTK_FRAME(frame),
-                               GTK_SHADOW_NONE);
+    /* creates the frame */
+    frame = gtk_frame_new(NULL);
+    gtk_frame_set_shadow_type(GTK_FRAME(frame), GTK_SHADOW_NONE);
 
 #if GTK_CHECK_VERSION(3, 0, 0)
-     frame_label_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    frame_label_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
 #else
-     frame_label_box = gtk_hbox_new(FALSE, 5);
+    frame_label_box = gtk_hbox_new(FALSE, 5);
 #endif
-     frame_image = icon_cache_get_image(icon);
-     frame_label = gtk_label_new(name);
-     gtk_label_set_use_markup(GTK_LABEL(frame_label), TRUE);
-     gtk_box_pack_start(GTK_BOX(frame_label_box), frame_image, FALSE, FALSE, 0);
-     gtk_box_pack_start(GTK_BOX(frame_label_box), frame_label, FALSE, FALSE, 0);
+    frame_image = icon_cache_get_image(icon);
+    frame_label = gtk_label_new(name);
+    gtk_label_set_use_markup(GTK_LABEL(frame_label), TRUE);
+    gtk_box_pack_start(GTK_BOX(frame_label_box), frame_image, FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(frame_label_box), frame_label, FALSE, FALSE, 0);
 
-     content = gtk_label_new(temp);
-     /* TODO:GTK3 gtk_alignment_new(), etc is deprecated from 3.14 */
+    content = gtk_label_new(temp);
+    /* TODO:GTK3 gtk_alignment_new(), etc is deprecated from 3.14 */
 #if GTK_CHECK_VERSION(3, 0, 0)
-     GtkWidget *frame_box;
-     frame_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
-     gtk_widget_set_margin_start(GTK_WIDGET(frame_box), 48);
-     gtk_box_pack_start(GTK_BOX(frame_box), content, FALSE, FALSE, 0);
-     gtk_container_add(GTK_CONTAINER(frame), frame_box);
+    GtkWidget *frame_box;
+    frame_box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 5);
+    gtk_widget_set_margin_start(GTK_WIDGET(frame_box), 48);
+    gtk_box_pack_start(GTK_BOX(frame_box), content, FALSE, FALSE, 0);
+    gtk_container_add(GTK_CONTAINER(frame), frame_box);
 #else
-     alignment = gtk_alignment_new(0.5, 0.5, 1, 1);
-     gtk_alignment_set_padding(GTK_ALIGNMENT(alignment), 0, 0, 48, 0);
-     gtk_widget_show(alignment);
-     gtk_container_add(GTK_CONTAINER(frame), alignment);
-     gtk_misc_set_alignment(GTK_MISC(content), 0.0, 0.5);
-     gtk_container_add(GTK_CONTAINER(alignment), content);
+    alignment = gtk_alignment_new(0.5, 0.5, 1, 1);
+    gtk_alignment_set_padding(GTK_ALIGNMENT(alignment), 0, 0, 48, 0);
+    gtk_widget_show(alignment);
+    gtk_container_add(GTK_CONTAINER(frame), alignment);
+    gtk_misc_set_alignment(GTK_MISC(content), 0.0, 0.5);
+    gtk_container_add(GTK_CONTAINER(alignment), content);
 #endif
 
-     gtk_widget_show_all(frame);
-     gtk_widget_show_all(frame_label_box);
+    gtk_widget_show_all(frame);
+    gtk_widget_show_all(frame_label_box);
 
-     gtk_frame_set_label_widget(GTK_FRAME(frame), frame_label_box);
+    gtk_frame_set_label_widget(GTK_FRAME(frame), frame_label_box);
 
-     /* pack the item on the summary screen */
-     gtk_box_pack_start(GTK_BOX(shell->summary->view), frame, FALSE, FALSE, 4);
+    /* pack the item on the detail_view screen */
+    gtk_box_pack_start(GTK_BOX(shell->detail_view->view), frame, FALSE, FALSE,
+                       4);
 
-     /* add the item to the list of summary items */
-     summary->items = g_slist_prepend(summary->items, frame);
-
-     g_free(temp);
+    g_free(temp);
 }
 
-static void shell_summary_clear(ShellSummary *summary)
-{
-     GSList *item;
-
-     for (item = summary->items; item; item = item->next) {
-         gtk_widget_destroy(GTK_WIDGET(item->data));
-     }
-
-     g_slist_free(summary->items);
-     summary->items = NULL;
-
-     if (summary->header) gtk_widget_destroy(summary->header);
-     summary->header = NULL;
-}
-static void shell_summary_create_header(ShellSummary *summary,
+static void detail_view_create_header(DetailView *detail_view,
                                         gchar *title)
 {
     GtkWidget *header, *label;
@@ -1721,27 +1911,25 @@ static void shell_summary_create_header(ShellSummary *summary,
     label = gtk_bin_get_child(GTK_BIN(header));
     gtk_label_set_use_markup(GTK_LABEL(label), TRUE);
 
-    gtk_box_pack_start(GTK_BOX(shell->summary->view), header, FALSE, FALSE, 4);
-
-    summary->header = header;
+    gtk_box_pack_start(GTK_BOX(shell->detail_view->view), header, FALSE, FALSE, 4);
 
     g_free(temp);
 }
 
-static void shell_show_summary(void)
+static void shell_show_detail_view(void)
 {
     GKeyFile *keyfile;
-    gchar *summary;
+    gchar *detail;
 
-    set_view_type(SHELL_VIEW_SUMMARY, FALSE);
-    shell_summary_clear(shell->summary);
-    shell_summary_create_header(shell->summary, shell->selected_module->name);
+    set_view_type(SHELL_VIEW_DETAIL, FALSE);
+    detail_view_clear(shell->detail_view);
+    detail_view_create_header(shell->detail_view, shell->selected_module->name);
 
     keyfile = g_key_file_new();
-    summary = shell->selected_module->summaryfunc();
+    detail = shell->selected_module->summaryfunc();
 
-    if (g_key_file_load_from_data(keyfile, summary,
-                                  strlen(summary), 0, NULL)) {
+    if (g_key_file_load_from_data(keyfile, detail,
+                                  strlen(detail), 0, NULL)) {
          gchar **groups;
          gint group;
 
@@ -1760,7 +1948,7 @@ static void shell_show_summary(void)
                   method_result = g_strdup("N/A");
              }
 
-             shell_summary_add_item(shell->summary,
+             detail_view_add_item(shell->detail_view,
                                     icon, groups[group], method_result);
              shell_status_pulse();
 
@@ -1771,11 +1959,11 @@ static void shell_show_summary(void)
 
          g_strfreev(groups);
     } else {
-         DEBUG("error while parsing summary");
+         DEBUG("error while parsing detail_view");
          set_view_type(SHELL_VIEW_NORMAL, FALSE);
     }
 
-    g_free(summary);
+    g_free(detail);
     g_key_file_free(keyfile);
 
     shell_view_set_enabled(TRUE);
@@ -1789,76 +1977,77 @@ static void module_selected(gpointer data)
     ShellModuleEntry *entry;
     static ShellModuleEntry *current = NULL;
     static gboolean updating = FALSE;
-    GtkScrollbar		*hscrollbar, *vscrollbar;
+    GtkScrollbar *hscrollbar, *vscrollbar;
 
-    /* Gets the currently selected item on the left-side TreeView; if there is no
-       selection, silently return */
+    /* Gets the currently selected item on the left-side TreeView; if there is
+       no selection, silently return */
     if (!gtk_tree_selection_get_selected(shelltree->selection, &model, &iter)) {
-	return;
+        return;
     }
 
-    /* Mark the currently selected module as "unselected"; this is used to kill the
-       update timeout. */
+    /* Mark the currently selected module as "unselected"; this is used to kill
+       the update timeout. */
     if (current) {
-	current->selected = FALSE;
+        current->selected = FALSE;
     }
 
     if (updating) {
-      return;
+        return;
     } else {
-      updating = TRUE;
+        updating = TRUE;
     }
 
     if (!gtk_tree_model_iter_parent(model, &parent, &iter)) {
         memcpy(&parent, &iter, sizeof(iter));
     }
 
-    gtk_tree_model_get(model, &parent, TREE_COL_MODULE, &shell->selected_module, -1);
+    gtk_tree_model_get(model, &parent, TREE_COL_MODULE, &shell->selected_module,
+                       -1);
 
     /* Get the current selection and shows its related info */
     gtk_tree_model_get(model, &iter, TREE_COL_MODULE_ENTRY, &entry, -1);
     if (entry && !entry->selected) {
-	gchar *title;
+        gchar *title;
 
-	shell_status_set_enabled(TRUE);
-	shell_status_update(_("Updating..."));
+        shell_status_set_enabled(TRUE);
+        shell_status_update(_("Updating..."));
 
-	entry->selected = TRUE;
-	shell->selected = entry;
-	module_selected_show_info(entry, FALSE);
+        entry->selected = TRUE;
+        shell->selected = entry;
+        module_selected_show_info(entry, FALSE);
 
-	info_selected_show_extra(NULL);	/* clears the more info store */
-	gtk_tree_view_columns_autosize(GTK_TREE_VIEW(shell->info->view));
+        gtk_tree_view_columns_autosize(GTK_TREE_VIEW(shell->info_tree->view));
 
-	/* urgh. why don't GTK do this when the model is cleared? */
+        /* urgh. why don't GTK do this when the model is cleared? */
 #if GTK_CHECK_VERSION(3, 0, 0)
-    /* TODO:GTK3 */
+        /* TODO:GTK3 */
 #else
-        RANGE_SET_VALUE(info, vscrollbar, 0.0);
-        RANGE_SET_VALUE(info, hscrollbar, 0.0);
-        RANGE_SET_VALUE(moreinfo, vscrollbar, 0.0);
-        RANGE_SET_VALUE(moreinfo, hscrollbar, 0.0);
+        RANGE_SET_VALUE(info_tree, vscrollbar, 0.0);
+        RANGE_SET_VALUE(info_tree, hscrollbar, 0.0);
+        RANGE_SET_VALUE(detail_view, vscrollbar, 0.0);
+        RANGE_SET_VALUE(detail_view, hscrollbar, 0.0);
 #endif
 
-	title = g_strdup_printf("%s - %s", shell->selected_module->name, entry->name);
-	shell_set_title(shell, title);
-	g_free(title);
+        title = g_strdup_printf("%s - %s", shell->selected_module->name,
+                                entry->name);
+        shell_set_title(shell, title);
+        g_free(title);
 
-	shell_action_set_enabled("RefreshAction", TRUE);
-	shell_action_set_enabled("CopyAction", TRUE);
+        shell_action_set_enabled("RefreshAction", TRUE);
+        shell_action_set_enabled("CopyAction", TRUE);
 
-	shell_status_update(_("Done."));
-	shell_status_set_enabled(FALSE);
+        shell_status_update(_("Done."));
+        shell_status_set_enabled(FALSE);
     } else {
-	shell_set_title(shell, NULL);
-	shell_action_set_enabled("RefreshAction", FALSE);
-	shell_action_set_enabled("CopyAction", FALSE);
+        shell_set_title(shell, NULL);
+        shell_action_set_enabled("RefreshAction", FALSE);
+        shell_action_set_enabled("CopyAction", FALSE);
 
-	gtk_tree_store_clear(GTK_TREE_STORE(shell->info->model));
-	set_view_type(SHELL_VIEW_NORMAL, FALSE);
+        gtk_tree_store_clear(GTK_TREE_STORE(shell->info_tree->model));
+        set_view_type(SHELL_VIEW_NORMAL, FALSE);
 
         if (shell->selected_module->summaryfunc) {
-           shell_show_summary();
+            shell_show_detail_view();
         }
     }
 
@@ -1871,7 +2060,7 @@ static void info_selected(GtkTreeSelection * ts, gpointer data)
     ShellInfoTree *info = (ShellInfoTree *) data;
     GtkTreeModel *model = GTK_TREE_MODEL(info->model);
     GtkTreeIter parent;
-    gchar *datacol;
+    gchar *datacol, *mi_tag;
 
     if (!gtk_tree_selection_get_selected(ts, &model, &parent))
 	return;
@@ -1883,11 +2072,12 @@ static void info_selected(GtkTreeSelection * ts, gpointer data)
     }
 
     gtk_tree_model_get(model, &parent, INFO_TREE_COL_DATA, &datacol, -1);
-    info_selected_show_extra(datacol);
-    gtk_tree_view_columns_autosize(GTK_TREE_VIEW(shell->moreinfo->view));
+    mi_tag = key_mi_tag(datacol);
+    info_selected_show_extra(mi_tag);
+    g_free(mi_tag);
 }
 
-static ShellInfoTree *info_tree_new(gboolean extra)
+static ShellInfoTree *info_tree_new(void)
 {
     ShellInfoTree *info;
     GtkWidget *treeview, *scroll;
@@ -1974,9 +2164,7 @@ static ShellInfoTree *info_tree_new(gboolean extra)
 
     sel = gtk_tree_view_get_selection(GTK_TREE_VIEW(treeview));
 
-    if (!extra)
-	g_signal_connect(G_OBJECT(sel), "changed",
-			 (GCallback) info_selected, info);
+    g_signal_connect(G_OBJECT(sel), "changed", (GCallback)info_selected, info);
 
     gtk_container_add(GTK_CONTAINER(scroll), treeview);
 
@@ -2048,4 +2236,130 @@ static ShellTree *tree_new()
     gtk_widget_show_all(scroll);
 
     return shelltree;
+}
+
+gboolean key_is_flagged(const gchar *key) {
+    return (key && *key == '$' && strchr(key+1, '$')) ? TRUE : FALSE;
+}
+
+gboolean key_is_highlighted(const gchar *key) {
+    gchar *flags;
+    key_get_components(key, &flags, NULL, NULL, NULL, NULL, TRUE);
+    if (flags && strchr(flags, '*')) {
+        g_free(flags);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+gboolean key_wants_details(const gchar *key) {
+    gchar *flags;
+    key_get_components(key, &flags, NULL, NULL, NULL, NULL, TRUE);
+    if (flags && strchr(flags, '!')) {
+        g_free(flags);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+gboolean key_value_has_vendor_string(const gchar *key) {
+    gchar *flags;
+    key_get_components(key, &flags, NULL, NULL, NULL, NULL, TRUE);
+    if (flags && strchr(flags, '^')) {
+        g_free(flags);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+gboolean key_label_is_escaped(const gchar *key) {
+    gchar *flags;
+    key_get_components(key, &flags, NULL, NULL, NULL, NULL, TRUE);
+    if (flags && strchr(flags, '@')) {
+        g_free(flags);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+gchar *key_mi_tag(const gchar *key) {
+    static char flag_list[] = "*!^@";
+    gchar *p = (gchar*)key, *l, *t;
+
+    if (key_is_flagged(key)) {
+        l = strchr(key+1, '$');
+        if (*p == '$') p++; /* skip first if exists */
+        while(p < l && strchr(flag_list, *p)) {
+            p++;
+        }
+        if (strlen(p)) {
+            t = g_strdup(p);
+            *(strchr(t, '$')) = 0;
+            return t;
+        }
+    }
+    return NULL;
+}
+
+const gchar *key_get_name(const gchar *key) {
+    if (key_is_flagged(key))
+        return strchr(key+1, '$')+1;
+    return key;
+}
+
+/* key syntax:
+ *  [$[<flags>][<tag>]$]<name>[#[<dis>]]
+ *
+ * example for key = "$*!Foo$Bar#7":
+ * flags = "$*!^Foo$"  // key_is/wants_*() still works on flags
+ * tag = "Foo"        // the moreinfo/icon tag
+ * name = "Bar#7"     // the full unique name
+ * label = "Bar"      // the label displayed
+ * dis = "7"
+ */
+void key_get_components(const gchar *key,
+    gchar **flags, gchar **tag, gchar **name, gchar **label, gchar **dis,
+    gboolean null_empty) {
+
+    if (null_empty) {
+#define K_NULL_EMPTY(f) if (f) { *f = NULL; }
+        K_NULL_EMPTY(flags);
+        K_NULL_EMPTY(tag);
+        K_NULL_EMPTY(name);
+        K_NULL_EMPTY(label);
+        K_NULL_EMPTY(dis);
+    }
+
+    if (!key || !*key)
+        return;
+
+    const gchar *np = g_utf8_strchr(key+1, -1, '$') + 1;
+    if (*key == '$' && np) {
+        /* is flagged */
+        gchar *f = g_strdup(key);
+        *(g_utf8_strchr(f+1, -1, '$') + 1) = 0;
+        if (flags)
+            *flags = g_strdup(f);
+        if (tag)
+            *tag = key_mi_tag(f);
+        g_free(f);
+    } else
+        np = key;
+
+    if (name)
+        *name = g_strdup(np);
+    if (label) {
+        *label = g_strdup(np);
+        gchar *lbp = g_utf8_strchr(*label, -1, '#');
+        if (lbp)
+            *lbp = 0;
+        if (lbp && dis)
+            *dis = g_strdup(lbp + 1);
+
+        if (flags && *flags && strchr(*flags, '@')) {
+            gchar *ol = *label;
+            *label = g_strcompress(ol);
+            g_free(ol);
+        }
+    }
 }

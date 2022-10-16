@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -19,14 +19,19 @@
 #ifndef __HARDINFO_H__
 #define __HARDINFO_H__
 
+#include <stdio.h>
+#include <string.h>
+#include <ctype.h>
+#include <unistd.h>
 #include <gtk/gtk.h>
 #include "config.h"
 #include "shell.h"
 #include "vendor.h"
 #include "gettext.h"
 #include "info.h"
+#include "format_early.h"
 
-#define HARDINFO_COPYRIGHT_LATEST_YEAR 2017
+#define HARDINFO_COPYRIGHT_LATEST_YEAR 2021
 
 #ifndef LOCALEDIR
 #define LOCALEDIR "/usr/share/locale"
@@ -36,6 +41,7 @@ typedef enum {
   MODULE_FLAG_NONE = 0,
   MODULE_FLAG_NO_REMOTE = 1<<0,
   MODULE_FLAG_HAS_HELP = 1<<1,
+  MODULE_FLAG_HIDE = 1<<2,
 } ModuleEntryFlags;
 
 typedef struct _ModuleEntry		ModuleEntry;
@@ -45,16 +51,30 @@ typedef struct _ProgramParameters	ProgramParameters;
 
 struct _ProgramParameters {
   gboolean create_report;
+  gboolean force_all_details; /* for create_report, include any "moreinfo" that exists for any item */
   gboolean show_version;
   gboolean gui_running;
   gboolean list_modules;
   gboolean autoload_deps;
   gboolean run_xmlrpc_server;
+  gboolean skip_benchmarks;
+  gboolean quiet;
+
+  /*
+   * OK to use the common parts of HTML(4.0) and Pango Markup
+   * in the value part of a key/value.
+   * Including the (b,big,i,s,sub,sup,small,tt,u) tags.
+   * https://developer.gnome.org/pango/stable/PangoMarkupFormat.html
+   */
+  gboolean markup_ok;
+  int fmt_opts;
 
   gint     report_format;
+  gint     max_bench_results;
 
   gchar  **use_modules;
   gchar   *run_benchmark;
+  gchar   *bench_user_note;
   gchar   *result_format;
   gchar   *path_lib;
   gchar   *path_data;
@@ -84,11 +104,11 @@ struct _ModuleAbout {
 };
 
 /* String utility functions */
-inline void  remove_quotes(gchar *str);
-inline char *strend(gchar *str, gchar chr);
-inline void  remove_linefeed(gchar *str);
-gchar       *strreplacechr(gchar *string, gchar *replace, gchar new_char);
-gchar       *strreplace(gchar *string, gchar *replace, gchar *replacement);
+void   remove_quotes(gchar *str);
+char  *strend(gchar *str, gchar chr);
+void   remove_linefeed(gchar *str);
+gchar *strreplacechr(gchar *string, gchar *replace, gchar new_char);
+gchar *strreplace(gchar *string, gchar *replace, gchar *replacement);
 
 /* Widget utility functions */
 void widget_set_cursor(GtkWidget *widget, GdkCursorType cursor_type);
@@ -102,25 +122,24 @@ gchar    *file_chooser_build_filename(GtkWidget *chooser, gchar *extension);
 gpointer  file_types_get_data_by_name(FileTypes *file_types, gchar *name);
 
 /* Misc utility functions */
-#if RELEASE == 1
-gpointer idle_free(gpointer ptr);
-#else
-gpointer __idle_free(gpointer ptr, gchar *f, gint l);
-#define  idle_free(p) __idle_free(p, __FILE__, __LINE__)
-#endif	/* RELEASE == 1 */
+#if !(RELEASE == 1)
+#define DEBUG_AUTO_FREE 2
+#endif
+#include "auto_free.h"
+#define idle_free(ptr) auto_free(ptr)
 
 gchar	     *find_program(gchar *program_name);
-inline gchar *size_human_readable(gfloat size);
+gchar      *size_human_readable(gfloat size);
 void          nonblock_sleep(guint msec);
-void          open_url(gchar *url);
 GSList	     *modules_get_list(void);
 GSList	     *modules_load_selected(void);
 GSList       *modules_load_all(void);
 void	      module_unload_all(void);
-ModuleAbout  *module_get_about(ShellModule *module);
+const ModuleAbout  *module_get_about(ShellModule *module);
 gchar        *seconds_to_string(unsigned int seconds);
 
-gchar        *h_strdup_cprintf(const gchar *format, gchar *source, ...);
+gchar        *h_strdup_cprintf(const gchar *format, gchar *source, ...)
+                                __attribute__((format(gnu_printf, 1, 3)));
 gchar	     *h_strconcat(gchar *string1, ...);
 void          h_hash_table_remove_all (GHashTable *hash_table);
 
@@ -146,9 +165,10 @@ gchar		*module_call_method(gchar *method);
 gchar           *module_call_method_param(gchar * method, gchar * parameter);
 
 /* Sysfs stuff */
-gfloat		h_sysfs_read_float(gchar *endpoint, gchar *entry);
-gint		h_sysfs_read_int(gchar *endpoint, gchar *entry);
-gchar	       *h_sysfs_read_string(gchar *endpoint, gchar *entry);
+gfloat		h_sysfs_read_float(const gchar *endpoint, const gchar *entry);
+gint		h_sysfs_read_int(const gchar *endpoint, const gchar *entry);
+gint		h_sysfs_read_hex(const gchar *endpoint, const gchar *entry);
+gchar	       *h_sysfs_read_string(const gchar *endpoint, const gchar *entry);
 
 #define SCAN_START()  static gboolean scanned = FALSE; if (reload) scanned = FALSE; if (scanned) return;
 #define SCAN_END()    scanned = TRUE;
@@ -171,6 +191,11 @@ gchar *moreinfo_lookup(gchar *key);
 gboolean g_strv_contains(const gchar * const * strv, const gchar *str);
 #endif
 
+/* in gg_key_file_parse_string_as_value.c */
+gchar *
+gg_key_file_parse_string_as_value (const gchar *string, const gchar list_separator);
+
+gchar *hardinfo_clean_grpname(const gchar *v, int replacing);
 /* Hardinfo labels that have # are truncated and/or hidden.
  * Labels can't have $ because that is the delimiter in
  * moreinfo.
@@ -178,5 +203,32 @@ gboolean g_strv_contains(const gchar * const * strv, const gchar *str);
 gchar *hardinfo_clean_label(const gchar *v, int replacing);
 /* hardinfo uses the values as {ht,x}ml, apparently */
 gchar *hardinfo_clean_value(const gchar *v, int replacing);
+
+/* Same as hardinfo_spawn_command_line_sync(), but calls shell_status_pulse()
+ * before. */
+gboolean hardinfo_spawn_command_line_sync(const gchar *command_line,
+                                          gchar **standard_output,
+                                          gchar **standard_error,
+                                          gint *exit_status,
+                                          GError **error);
+
+/* a marker in text to point out problems, using markup where possible */
+const char *problem_marker();
+
+/* a version of g_strescape() that allows escaping extra characters.
+ * use with g_strcompress() as normal. */
+gchar *
+gg_strescape (const gchar *source,
+             const gchar *exceptions,
+             const gchar *extra);
+
+/* hinote helpers */
+#define note_max_len 512
+#define note_printf(note_buff, fmt, ...)  \
+    snprintf((note_buff) + strlen(note_buff), note_max_len - strlen(note_buff) - 1, \
+        fmt, ##__VA_ARGS__)
+#define note_print(note_buff, str) note_printf((note_buff), "%s", str)
+gboolean note_cond_bullet(gboolean cond, gchar *note_buff, const gchar *desc_str);
+gboolean note_require_tool(const gchar *tool, gchar *note_buff, const gchar *desc_str);
 
 #endif				/* __HARDINFO_H__ */

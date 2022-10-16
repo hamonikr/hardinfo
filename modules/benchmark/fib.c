@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -17,6 +17,10 @@
  */
 
 #include "benchmark.h"
+
+/* if anything changes in this block, increment revision */
+#define BENCH_REVISION 0
+#define ANSWER 42
 
 gulong fib(gulong n)
 {
@@ -39,7 +43,7 @@ benchmark_fib(void)
     g_timer_reset(timer);
     g_timer_start(timer);
 
-    fib(42);
+    fib(ANSWER);
 
     g_timer_stop(timer);
     r.elapsed_time = g_timer_elapsed(timer, NULL);
@@ -47,6 +51,9 @@ benchmark_fib(void)
 
     r.threads_used = 1;
     r.result = r.elapsed_time;
+
+    r.revision = BENCH_REVISION;
+    snprintf(r.extra, 255, "a:%d", ANSWER);
 
     bench_results[BENCHMARK_FIB] = r;
 }

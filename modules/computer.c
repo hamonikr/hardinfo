@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2008 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2008 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -38,12 +38,16 @@
 
 #include "info.h"
 
+#define THISORUNK(t) ( (t) ? t : _("(Unknown)") )
+
 /* Callbacks */
 gchar *callback_summary(void);
 gchar *callback_os(void);
+gchar *callback_security(void);
 gchar *callback_modules(void);
 gchar *callback_boots(void);
 gchar *callback_locales(void);
+gchar *callback_memory_usage();
 gchar *callback_fs(void);
 gchar *callback_display(void);
 gchar *callback_network(void);
@@ -57,10 +61,12 @@ gchar *callback_dev(void);
 /* Scan callbacks */
 void scan_summary(gboolean reload);
 void scan_os(gboolean reload);
+void scan_security(gboolean reload);
 void scan_modules(gboolean reload);
 void scan_boots(gboolean reload);
 void scan_locales(gboolean reload);
 void scan_fs(gboolean reload);
+void scan_memory_usage(gboolean reload);
 void scan_display(gboolean reload);
 void scan_network(gboolean reload);
 void scan_users(gboolean reload);
@@ -70,26 +76,46 @@ void scan_env_var(gboolean reload);
 void scan_dev(gboolean reload);
 #endif /* GLIB_CHECK_VERSION(2,14,0) */
 
+enum {
+    ENTRY_SUMMARY,
+    ENTRY_OS,
+    ENTRY_SECURITY,
+    ENTRY_KMOD,
+    ENTRY_BOOTS,
+    ENTRY_LANGUAGES,
+    ENTRY_MEMORY_USAGE,
+    ENTRY_FS,
+    ENTRY_DISPLAY,
+    ENTRY_ENV,
+    ENTRY_DEVEL,
+    ENTRY_USERS,
+    ENTRY_GROUPS
+};
+
 static ModuleEntry entries[] = {
-    {N_("Summary"), "summary.png", callback_summary, scan_summary, MODULE_FLAG_NONE},
-    {N_("Operating System"), "os.png", callback_os, scan_os, MODULE_FLAG_NONE},
-    {N_("Kernel Modules"), "module.png", callback_modules, scan_modules, MODULE_FLAG_NONE},
-    {N_("Boots"), "boot.png", callback_boots, scan_boots, MODULE_FLAG_NONE},
-    {N_("Languages"), "language.png", callback_locales, scan_locales, MODULE_FLAG_NONE},
-    {N_("Filesystems"), "dev_removable.png", callback_fs, scan_fs, MODULE_FLAG_NONE},
-    {N_("Display"), "monitor.png", callback_display, scan_display, MODULE_FLAG_NONE},
-    {N_("Environment Variables"), "environment.png", callback_env_var, scan_env_var, MODULE_FLAG_NONE},
+    [ENTRY_SUMMARY] = {N_("Summary"), "summary.png", callback_summary, scan_summary, MODULE_FLAG_NONE},
+    [ENTRY_OS] = {N_("Operating System"), "os.png", callback_os, scan_os, MODULE_FLAG_NONE},
+    [ENTRY_SECURITY] = {N_("Security"), "security.png", callback_security, scan_security, MODULE_FLAG_NONE},
+    [ENTRY_KMOD] = {N_("Kernel Modules"), "module.png", callback_modules, scan_modules, MODULE_FLAG_NONE},
+    [ENTRY_BOOTS] = {N_("Boots"), "boot.png", callback_boots, scan_boots, MODULE_FLAG_NONE},
+    [ENTRY_LANGUAGES] = {N_("Languages"), "language.png", callback_locales, scan_locales, MODULE_FLAG_NONE},
+    [ENTRY_MEMORY_USAGE] = {N_("Memory Usage"), "memory.png", callback_memory_usage, scan_memory_usage, MODULE_FLAG_NONE},
+    [ENTRY_FS] = {N_("Filesystems"), "dev_removable.png", callback_fs, scan_fs, MODULE_FLAG_NONE},
+    [ENTRY_DISPLAY] = {N_("Display"), "monitor.png", callback_display, scan_display, MODULE_FLAG_NONE},
+    [ENTRY_ENV] = {N_("Environment Variables"), "environment.png", callback_env_var, scan_env_var, MODULE_FLAG_NONE},
 #if GLIB_CHECK_VERSION(2,14,0)
-    {N_("Development"), "devel.png", callback_dev, scan_dev, MODULE_FLAG_NONE},
+    [ENTRY_DEVEL] = {N_("Development"), "devel.png", callback_dev, scan_dev, MODULE_FLAG_NONE},
+#else
+    [ENTRY_DEVEL] = {N_("Development"), "devel.png", callback_dev, scan_dev, MODULE_FLAG_HIDE},
 #endif /* GLIB_CHECK_VERSION(2,14,0) */
-    {N_("Users"), "users.png", callback_users, scan_users, MODULE_FLAG_NONE},
-    {N_("Groups"), "users.png", callback_groups, scan_groups, MODULE_FLAG_NONE},
+    [ENTRY_USERS] = {N_("Users"), "users.png", callback_users, scan_users, MODULE_FLAG_NONE},
+    [ENTRY_GROUPS] = {N_("Groups"), "users.png", callback_groups, scan_groups, MODULE_FLAG_NONE},
     {NULL},
 };
 
-
 gchar *module_list = NULL;
 Computer *computer = NULL;
+gchar *meminfo = NULL;
 
 gchar *hi_more_info(gchar * entry)
 {
@@ -101,27 +127,42 @@ gchar *hi_more_info(gchar * entry)
     return g_strdup_printf("[%s]", entry);
 }
 
+/* a g_str_equal() where either may be null */
+#define g_str_equal0(a,b) (g_strcmp0(a,b) == 0)
+
 gchar *hi_get_field(gchar * field)
 {
+    gchar *tag, *label;
+    key_get_components(field, NULL, &tag, NULL, &label, NULL, TRUE);
+
     gchar *tmp;
 
-    if (g_str_equal(field, _("Memory"))) {
+    if (g_str_equal0(label, _("Memory"))) {
         MemoryInfo *mi = computer_get_memory();
         tmp = g_strdup_printf(_("%dMB (%dMB used)"), mi->total, mi->used);
         g_free(mi);
-    } else if (g_str_equal(field, _("Uptime"))) {
+    } else if (g_str_equal0(label, _("Uptime"))) {
         tmp = computer_get_formatted_uptime();
-    } else if (g_str_equal(field, _("Date/Time"))) {
+    } else if (g_str_equal0(label, _("Date/Time"))) {
         time_t t = time(NULL);
 
         tmp = g_new0(gchar, 64);
         strftime(tmp, 64, "%c", localtime(&t));
-    } else if (g_str_equal(field, _("Load Average"))) {
+    } else if (g_str_equal0(label, _("Load Average"))) {
         tmp = computer_get_formatted_loadavg();
-    } else if (g_str_equal(field, _("Available entropy in /dev/random"))) {
+    } else if (g_str_equal0(tag, "entropy")) {
         tmp = computer_get_entropy_avail();
     } else {
-        tmp = g_strdup_printf("Unknown field: %s", field);
+        gchar *info = NULL;
+        if (tag)
+            info = moreinfo_lookup_with_prefix("DEV", tag);
+        else if (label)
+            info = moreinfo_lookup_with_prefix("DEV", label);
+
+        if (info)
+            tmp = g_strdup(info);
+        else
+            tmp = g_strdup_printf("Unknown field: [tag: %s] label: %s", tag ? tag : "(none)", label ? label : "(empty)");
     }
     return tmp;
 }
@@ -138,6 +179,13 @@ void scan_os(gboolean reload)
 {
     SCAN_START();
     computer->os = computer_get_os();
+    SCAN_END();
+}
+
+void scan_security(gboolean reload)
+{
+    SCAN_START();
+    //nothing to do here yet
     SCAN_END();
 }
 
@@ -170,9 +218,18 @@ void scan_fs(gboolean reload)
     SCAN_END();
 }
 
+void scan_memory_usage(gboolean reload)
+{
+    SCAN_START();
+    scan_memory_do();
+    SCAN_END();
+}
+
 void scan_display(gboolean reload)
 {
     SCAN_START();
+    if (computer->display)
+        computer_free_display(computer->display);
     computer->display = computer_get_display();
     SCAN_END();
 }
@@ -202,11 +259,11 @@ void scan_dev(gboolean reload)
        gchar *compiler_name;
        gchar *version_command;
        gchar *regex;
-       gboolean stdout;
+       gboolean read_stdout;
     } detect_lang[] = {
        { N_("Scripting Languages"), NULL, FALSE },
        { N_("Gambas3 (gbr3)"), "gbr3 --version", "\\d+\\.\\d+\\.\\d+", TRUE },
-       { N_("Python"), "python -V", "\\d+\\.\\d+\\.\\d+", FALSE },
+       { N_("Python (default)"), "python -V", "\\d+\\.\\d+\\.\\d+", FALSE },
        { N_("Python2"), "python2 -V", "\\d+\\.\\d+\\.\\d+", FALSE },
        { N_("Python3"), "python3 -V", "\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Perl"), "perl -v", "\\d+\\.\\d+\\.\\d+", TRUE },
@@ -215,26 +272,33 @@ void scan_dev(gboolean reload)
        { N_("PHP"), "php --version", "\\d+\\.\\d+\\.\\S+", TRUE},
        { N_("Ruby"), "ruby --version", "\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Bash"), "bash --version", "\\d+\\.\\d+\\.\\S+", TRUE},
+       { N_("JavaScript (Node.js)"), "node --version", "(?<=v)(\\d\\.?)+", TRUE },
+       { N_("awk"), "awk --version", "GNU Awk \\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Compilers"), NULL, FALSE },
        { N_("C (GCC)"), "gcc -v", "\\d+\\.\\d+\\.\\d+", FALSE },
        { N_("C (Clang)"), "clang -v", "\\d+\\.\\d+", FALSE },
        { N_("D (dmd)"), "dmd --help", "\\d+\\.\\d+", TRUE },
        { N_("Gambas3 (gbc3)"), "gbc3 --version", "\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Java"), "javac -version", "\\d+\\.\\d+\\.\\d+", FALSE },
-       { N_("CSharp (Mono, old)"), "mcs --version", "\\d+\\.\\d+\\.\\d+\\.\\d+", TRUE },
-       { N_("CSharp (Mono)"), "gmcs --version", "\\d+\\.\\d+\\.\\d+\\.\\d+", TRUE },
+       { N_("C♯ (mcs)"), "mcs --version", "\\d+\\.\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Vala"), "valac --version", "\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("Haskell (GHC)"), "ghc -v", "\\d+\\.\\d+\\.\\d+", FALSE },
        { N_("FreePascal"), "fpc -iV", "\\d+\\.\\d+\\.?\\d*", TRUE },
        { N_("Go"), "go version", "\\d+\\.\\d+\\.?\\d* ", TRUE },
+       { N_("Rust"), "rustc --version", "(?<=rustc )(\\d\\.?)+", TRUE },
        { N_("Tools"), NULL, FALSE },
        { N_("make"), "make --version", "\\d+\\.\\d+", TRUE },
+       { N_("ninja"), "ninja --version", "\\d+\\.\\d+\\.\\d+", TRUE },
        { N_("GDB"), "gdb --version", "(?<=^GNU gdb ).*", TRUE },
+       { N_("LLDB"), "lldb --version", "(?<=lldb version )(\\d\\.?)+", TRUE },
        { N_("strace"), "strace -V", "\\d+\\.\\d+\\.?\\d*", TRUE },
        { N_("valgrind"), "valgrind --version", "\\d+\\.\\d+\\.\\S+", TRUE },
        { N_("QMake"), "qmake --version", "\\d+\\.\\S+", TRUE},
        { N_("CMake"), "cmake --version", "\\d+\\.\\d+\\.?\\d*", TRUE},
        { N_("Gambas3 IDE"), "gambas3 --version", "\\d+\\.\\d+\\.\\d+", TRUE },
+       { N_("Radare2"), "radare2 -v", "(?<=radare2 )(\\d+\\.?)+(-git)?", TRUE },
+       { N_("ltrace"), "ltrace --version", "(?<=ltrace version )\\d+\\.\\d+\\.\\d+", TRUE },
+       { N_("Powershell"), "pwsh --version", "\\d+\\.\\d+\\.\\d+", TRUE },
     };
 
     g_free(dev_list);
@@ -254,10 +318,10 @@ void scan_dev(gboolean reload)
             continue;
        }
 
-       if (detect_lang[i].stdout) {
-            found = g_spawn_command_line_sync(detect_lang[i].version_command, &output, &ignored, NULL, NULL);
+       if (detect_lang[i].read_stdout) {
+            found = hardinfo_spawn_command_line_sync(detect_lang[i].version_command, &output, &ignored, NULL, NULL);
        } else {
-            found = g_spawn_command_line_sync(detect_lang[i].version_command, &ignored, &output, NULL, NULL);
+            found = hardinfo_spawn_command_line_sync(detect_lang[i].version_command, &ignored, &output, NULL, NULL);
        }
        g_free(ignored);
 
@@ -293,6 +357,7 @@ gchar *callback_dev(void)
 {
     return g_strdup_printf(
                 "[$ShellParam$]\n"
+                "ViewType=5\n"
                 "ColumnTitle$TextValue=%s\n" /* Program */
                 "ColumnTitle$Value=%s\n" /* Version */
                 "ShowColumnHeaders=true\n"
@@ -301,6 +366,24 @@ gchar *callback_dev(void)
                 dev_list);
 }
 #endif /* GLIB_CHECK_VERSION(2,14,0) */
+
+gchar *callback_memory_usage()
+{
+    extern gchar *lginterval;
+    return g_strdup_printf("[Memory]\n"
+               "%s\n"
+               "[$ShellParam$]\n"
+               "ViewType=2\n"
+               "LoadGraphSuffix= kB\n"
+               "RescanInterval=2000\n"
+               "ColumnTitle$TextValue=%s\n"
+               "ColumnTitle$Extra1=%s\n"
+               "ColumnTitle$Value=%s\n"
+               "ShowColumnHeaders=true\n"
+               "%s\n", meminfo,
+               _("Field"), _("Description"), _("Value"), /* column labels */
+               lginterval);
+}
 
 static gchar *detect_machine_type(void)
 {
@@ -315,6 +398,7 @@ static gchar *detect_machine_type(void)
     if (chassis) {
         if (strstr(chassis, "Raspberry Pi") != NULL
             || strstr(chassis, "ODROID") != NULL
+            || strstr(chassis, "Firefly ROC") != NULL
             /* FIXME: consider making a table when adding more models */ ) {
                 g_free(chassis);
                 return g_strdup(_("Single-board computer"));
@@ -458,9 +542,11 @@ gchar *callback_summary(void)
 {
     struct Info *info = info_new();
 
+    info_set_view_type(info, SHELL_VIEW_DETAIL);
+
     info_add_group(info, _("Computer"),
-        info_field_printf(_("Processor"), "%s",
-            module_call_method("devices::getProcessorName")),
+        info_field(_("Processor"),
+            idle_free(module_call_method("devices::getProcessorNameAndDesc"))),
         info_field_update(_("Memory"), 1000),
         info_field_printf(_("Machine Type"), "%s",
             computer_get_virtualization()),
@@ -472,17 +558,19 @@ gchar *callback_summary(void)
     info_add_group(info, _("Display"),
         info_field_printf(_("Resolution"), _(/* label for resolution */ "%dx%d pixels"),
             computer->display->width, computer->display->height),
-        info_field(_("OpenGL Renderer"), computer->display->ogl_renderer),
-        info_field(_("X11 Vendor"), computer->display->vendor),
+        info_field(_("Display Adapter"),
+            idle_free(module_call_method("devices::getGPUList"))),
+        info_field(_("OpenGL Renderer"), THISORUNK(computer->display->xi->glx->ogl_renderer)),
+        info_field(_("Session Display Server"), THISORUNK(computer->display->display_server)),
         info_field_last());
 
     info_add_computed_group(info, _("Audio Devices"),
         idle_free(computer_get_alsacards(computer)));
-    info_add_computed_group(info, _("Input Devices"),
+    info_add_computed_group_wo_extra(info, _("Input Devices"),
         idle_free(module_call_method("devices::getInputDevices")));
     info_add_computed_group(info, NULL, /* getPrinters provides group headers */
         idle_free(module_call_method("devices::getPrinters")));
-    info_add_computed_group(info, NULL,  /* getStorageDevices provides group headers */
+    info_add_computed_group_wo_extra(info, NULL,  /* getStorageDevices provides group headers */
         idle_free(module_call_method("devices::getStorageDevices")));
 
     return info_flatten(info);
@@ -491,26 +579,108 @@ gchar *callback_summary(void)
 gchar *callback_os(void)
 {
     struct Info *info = info_new();
+    gchar *distro_icon;
+    gchar *distro;
 
-    info_add_group(info, _("Version"),
-        info_field(_("Kernel"), computer->os->kernel),
+    info_set_view_type(info, SHELL_VIEW_DETAIL);
+
+    distro_icon = computer->os->distroid
+                      ? idle_free(g_strdup_printf("distros/%s.svg",
+                                                  computer->os->distroid))
+                      : NULL;
+    distro = computer->os->distrocode
+                      ? idle_free(g_strdup_printf("%s (%s)",
+                                  computer->os->distro, computer->os->distrocode))
+                      : computer->os->distro;
+
+    struct InfoGroup *version_group =
+    info_add_group(
+        info, _("Version"), info_field(_("Kernel"), computer->os->kernel),
+        info_field(_("Command Line"), computer->os->kcmdline ?: _("Unknown")),
         info_field(_("Version"), computer->os->kernel_version),
         info_field(_("C Library"), computer->os->libc),
-        info_field(_("Distribution"), computer->os->distro),
+        info_field(_("Distribution"), distro,
+                   .value_has_vendor = TRUE,
+                   .icon = distro_icon),
         info_field_last());
+
+    if (computer->os->distro_flavor) {
+        info_group_add_field(version_group,
+            info_field(_("Spin/Flavor"), computer->os->distro_flavor->name,
+                .value_has_vendor = TRUE,
+                .icon = computer->os->distro_flavor->icon) );
+    }
 
     info_add_group(info, _("Current Session"),
         info_field(_("Computer Name"), computer->os->hostname),
         info_field(_("User Name"), computer->os->username),
         info_field(_("Language"), computer->os->language),
         info_field(_("Home Directory"), computer->os->homedir),
+        info_field(_("Desktop Environment"), computer->os->desktop),
         info_field_last());
 
-    info_add_group(info, _("Misc"),
-        info_field_update(_("Uptime"), 1000),
-        info_field_update(_("Load Average"), 10000),
-        info_field_update(_("Available entropy in /dev/random"), 1000),
+    info_add_group(info, _("Misc"), info_field_update(_("Uptime"), 1000),
+                   info_field_update(_("Load Average"), 10000),
+                   info_field_last());
+
+    return info_flatten(info);
+}
+
+gchar *callback_security(void)
+{
+    struct Info *info = info_new();
+
+    info_set_view_type(info, SHELL_VIEW_DETAIL);
+
+    info_add_group(info, _("HardInfo"),
+                   info_field(_("HardInfo running as"),
+                              (getuid() == 0) ? _("Superuser") : _("User")),
+                   info_field_last());
+
+    info_add_group(
+        info, _("Health"),
+        info_field_update(_("Available entropy in /dev/random"), 1000, .tag = g_strdup("entropy") ),
         info_field_last());
+
+    info_add_group(
+        info, _("Hardening Features"),
+        info_field(_("ASLR"), idle_free(computer_get_aslr())),
+        info_field(_("dmesg"), idle_free(computer_get_dmesg_status())),
+        info_field_last());
+
+    info_add_group(
+        info, _("Linux Security Modules"),
+        info_field(_("Modules available"), idle_free(computer_get_lsm())),
+        info_field(_("SELinux status"), computer_get_selinux()),
+        info_field_last());
+
+    GDir *dir = g_dir_open("/sys/devices/system/cpu/vulnerabilities", 0, NULL);
+    if (dir) {
+        struct InfoGroup *vulns =
+            info_add_group(info, _("CPU Vulnerabilities"), info_field_last());
+        vulns->sort = INFO_GROUP_SORT_NAME_ASCENDING;
+        const gchar *vuln;
+
+        while ((vuln = g_dir_read_name(dir))) {
+            gchar *contents = h_sysfs_read_string(
+                "/sys/devices/system/cpu/vulnerabilities", vuln);
+            if (!contents)
+                continue;
+
+            const gchar *icon = NULL;
+            if (g_strstr_len(contents, -1, "Vulnerable") ||
+                g_strstr_len(contents, -1, "vulnerable"))
+                icon = "dialog-warning.png";
+
+            info_group_add_fields(vulns,
+                                  info_field(g_strdup(vuln),
+                                             idle_free(contents), .icon = icon,
+                                             .free_name_on_flatten = TRUE),
+                                  info_field_last());
+        }
+
+        g_dir_close(dir);
+    }
 
     return info_flatten(info);
 }
@@ -575,27 +745,80 @@ gchar *callback_fs(void)
 
 gchar *callback_display(void)
 {
+    int n = 0;
+    gchar *screens_str = strdup(""), *outputs_str = strdup("");
+    xinfo *xi = computer->display->xi;
+    xrr_info *xrr = xi->xrr;
+    glx_info *glx = xi->glx;
+    wl_info *wl = computer->display->wl;
+
     struct Info *info = info_new();
 
-    info_add_group(info, _("Display"),
-        info_field_printf(_("Resolution"), _(/* resolution WxH unit */ "%dx%d pixels"),
-                computer->display->width, computer->display->height),
-        info_field(_("Vendor"), computer->display->vendor),
-        info_field(_("Version"), computer->display->version),
-        info_field(_("Current Display Name"), computer->display->display_name),
+    info_set_view_type(info, SHELL_VIEW_DETAIL);
+
+    info_add_group(info, _("Session"),
+        info_field(_("Type"), THISORUNK(computer->display->session_type)),
         info_field_last());
 
-    info_add_computed_group(info, _("Monitors"), computer->display->monitors);
+    info_add_group(info, _("Wayland"),
+        info_field(_("Current Display Name"),
+                    (wl->display_name) ? (wl->display_name) : _("(Not Available)")),
+        info_field_last());
 
-    info_add_group(info, _("OpenGL"),
-        info_field(_("Vendor"), computer->display->ogl_vendor),
-        info_field(_("Renderer"), computer->display->ogl_renderer),
-        info_field(_("Version"), computer->display->ogl_version),
+    info_add_group(info, _("X Server"),
+        info_field(_("Current Display Name"), THISORUNK(xi->display_name) ),
+        info_field(_("Vendor"), THISORUNK(xi->vendor), .value_has_vendor = TRUE ),
+        info_field(_("Version"), THISORUNK(xi->version) ),
+        info_field(_("Release Number"), THISORUNK(xi->release_number) ),
+        info_field_last());
+
+    for (n = 0; n < xrr->screen_count; n++) {
+        gchar *dims = g_strdup_printf(_(/* resolution WxH unit */ "%dx%d pixels"), xrr->screens[n].px_width, xrr->screens[n].px_height);
+        screens_str = h_strdup_cprintf("Screen %d=%s\n", screens_str, xrr->screens[n].number, dims);
+        g_free(dims);
+    }
+    info_add_computed_group(info, _("Screens"), screens_str);
+
+    for (n = 0; n < xrr->output_count; n++) {
+        gchar *connection = NULL;
+        switch (xrr->outputs[n].connected) {
+            case 0:
+                connection = _("Disconnected");
+                break;
+            case 1:
+                connection = _("Connected");
+                break;
+            case -1:
+            default:
+                connection = _("Unknown");
+                break;
+        }
+        gchar *dims = (xrr->outputs[n].screen == -1)
+            ? g_strdup(_("Unused"))
+            : g_strdup_printf(_("%dx%d pixels, offset (%d, %d)"),
+                    xrr->outputs[n].px_width, xrr->outputs[n].px_height,
+                    xrr->outputs[n].px_offset_x, xrr->outputs[n].px_offset_y);
+
+        outputs_str = h_strdup_cprintf("%s=%s; %s\n", outputs_str,
+            xrr->outputs[n].name, connection, dims);
+
+        g_free(dims);
+    }
+    info_add_computed_group(info, _("Outputs (XRandR)"), outputs_str);
+
+    info_add_group(info, _("OpenGL (GLX)"),
+        info_field(_("Vendor"), THISORUNK(glx->ogl_vendor), .value_has_vendor = TRUE ),
+        info_field(_("Renderer"), THISORUNK(glx->ogl_renderer) ),
         info_field(_("Direct Rendering"),
-            computer->display->dri ? _("Yes") : _("No")),
+            glx->direct_rendering ? _("Yes") : _("No")),
+        info_field(_("Version (Compatibility)"), THISORUNK(glx->ogl_version) ),
+        info_field(_("Shading Language Version (Compatibility)"), THISORUNK(glx->ogl_sl_version) ),
+        info_field(_("Version (Core)"), THISORUNK(glx->ogl_core_version) ),
+        info_field(_("Shading Language Version (Core)"), THISORUNK(glx->ogl_core_sl_version) ),
+        info_field(_("Version (ES)"), THISORUNK(glx->ogles_version) ),
+        info_field(_("Shading Language Version (ES)"), THISORUNK(glx->ogles_sl_version) ),
+        info_field(_("GLX Version"), THISORUNK(glx->glx_version) ),
         info_field_last());
-
-    info_add_computed_group(info, _("Extensions"), computer->display->extensions);
 
     return info_flatten(info);
 }
@@ -641,20 +864,28 @@ gchar *get_ogl_renderer(void)
 {
     scan_display(FALSE);
 
-    return g_strdup(computer->display->ogl_renderer);
+    return g_strdup(computer->display->xi->glx->ogl_renderer);
 }
 
 gchar *get_display_summary(void)
 {
     scan_display(FALSE);
 
-    return g_strdup_printf("%dx%d\n"
+    gchar *gpu_list = module_call_method("devices::getGPUList");
+
+    gchar *ret = g_strdup_printf(
+                           "%s\n"
+                           "%dx%d\n"
                            "%s\n"
                            "%s",
-                           computer->display->width,
-                           computer->display->height,
-                           computer->display->ogl_renderer,
-                           computer->display->vendor);
+                           gpu_list,
+                           computer->display->width, computer->display->height,
+                           computer->display->display_server,
+                           (computer->display->xi->glx->ogl_renderer)
+                              ? computer->display->xi->glx->ogl_renderer
+                              : "" );
+    g_free(gpu_list);
+    return ret;
 }
 
 gchar *get_kernel_module_description(gchar *module)
@@ -682,16 +913,65 @@ gchar *get_audio_cards(void)
     return computer_get_alsacards(computer);
 }
 
-ShellModuleMethod *hi_exported_methods(void)
+/* the returned string must stay in kB as it is used
+ * elsewhere with that expectation */
+gchar *get_memory_total(void)
 {
-    static ShellModuleMethod m[] = {
+    scan_memory_usage(FALSE);
+    return moreinfo_lookup ("DEV:MemTotal");
+}
+
+gchar *memory_devices_get_system_memory_str(); /* in dmi_memory.c */
+gchar *memory_devices_get_system_memory_types_str();
+/* Note 1: moreinfo_lookup() results should not be freed because
+ *         they are pointers into a GHash.
+ *         module_call_method() g_strdup()s it's return value. */
+const gchar *get_memory_desc(void) // [1] const (as to say "don't free")
+{
+    scan_memory_usage(FALSE);
+    gchar *avail = g_strdup(moreinfo_lookup("DEV:MemTotal")); // [1] g_strdup()
+    double k = avail ? (double)strtol(avail, NULL, 10) : 0;
+    if (k) {
+        g_free(avail);
+        avail = NULL;
+        const char *fmt = _(/*/ <value> <unit> "usable memory" */ "%0.1f %s available to Linux");
+        if (k > (2048 * 1024))
+            avail = g_strdup_printf(fmt, k / (1024*1024), _("GiB") );
+        else if (k > 2048)
+            avail = g_strdup_printf(fmt, k / 1024, _("MiB") );
+        else
+            avail = g_strdup_printf(fmt, k, _("KiB") );
+    }
+    gchar *mem = memory_devices_get_system_memory_str();
+    if (mem) {
+        gchar *types = memory_devices_get_system_memory_types_str();
+        gchar *ret = g_strdup_printf("%s %s\n%s", mem, types, avail ? avail : "");
+        g_free(avail);
+        g_free(mem);
+        g_free(types);
+        return (gchar*)idle_free(ret); // [1] idle_free()
+    }
+    return (gchar*)idle_free(avail); // [1] idle_free()
+}
+
+static gchar *get_machine_type(void)
+{
+    return computer_get_virtualization();
+}
+
+const ShellModuleMethod *hi_exported_methods(void)
+{
+    static const ShellModuleMethod m[] = {
         {"getOSKernel", get_os_kernel},
         {"getOS", get_os},
         {"getDisplaySummary", get_display_summary},
         {"getOGLRenderer", get_ogl_renderer},
         {"getAudioCards", get_audio_cards},
         {"getKernelModuleDescription", get_kernel_module_description},
-        {NULL}
+        {"getMemoryTotal", get_memory_total},
+        {"getMemoryDesc", get_memory_desc},
+        {"getMachineType", get_machine_type},
+        {NULL},
     };
 
     return m;
@@ -721,6 +1001,11 @@ gchar **hi_module_get_dependencies(void)
 
 gchar *hi_module_get_summary(void)
 {
+    gchar *virt = computer_get_virtualization();
+    gchar *machine_type = g_strdup_printf("%s (%s)",
+                                          _("Motherboard"),
+                                          (char*)idle_free(virt));
+
     return g_strdup_printf("[%s]\n"
                     "Icon=os.png\n"
                     "Method=computer::getOS\n"
@@ -729,7 +1014,7 @@ gchar *hi_module_get_summary(void)
                     "Method=devices::getProcessorNameAndDesc\n"
                     "[%s]\n"
                     "Icon=memory.png\n"
-                    "Method=devices::getMemoryTotal\n"
+                    "Method=computer::getMemoryDesc\n"
                     "[%s]\n"
                     "Icon=module.png\n"
                     "Method=devices::getMotherboard\n"
@@ -738,7 +1023,7 @@ gchar *hi_module_get_summary(void)
                     "Method=computer::getDisplaySummary\n"
                     "[%s]\n"
                     "Icon=hdd.png\n"
-                    "Method=devices::getStorageDevices\n"
+                    "Method=devices::getStorageDevicesSimple\n"
                     "[%s]\n"
                     "Icon=printer.png\n"
                     "Method=devices::getPrinters\n"
@@ -746,15 +1031,18 @@ gchar *hi_module_get_summary(void)
                     "Icon=audio.png\n"
                     "Method=computer::getAudioCards\n",
                     _("Operating System"),
-                    _("CPU"), _("RAM"), _("Motherboard"), _("Graphics"),
+                    _("Processor"), _("Memory"), (char*)idle_free(machine_type), _("Graphics"),
                     _("Storage"), _("Printers"), _("Audio")
                     );
 }
 
 void hi_module_deinit(void)
 {
+    g_hash_table_destroy(memlabels);
+
     if (computer->os) {
         g_free(computer->os->kernel);
+        g_free(computer->os->kcmdline);
         g_free(computer->os->libc);
         g_free(computer->os->distrocode);
         g_free(computer->os->distro);
@@ -769,17 +1057,7 @@ void hi_module_deinit(void)
         g_free(computer->os);
     }
 
-    if (computer->display) {
-        g_free(computer->display->ogl_vendor);
-        g_free(computer->display->ogl_renderer);
-        g_free(computer->display->ogl_version);
-        g_free(computer->display->display_name);
-        g_free(computer->display->vendor);
-        g_free(computer->display->version);
-        g_free(computer->display->extensions);
-        g_free(computer->display->monitors);
-        g_free(computer->display);
-    }
+    computer_free_display(computer->display);
 
     if (computer->alsa) {
         g_slist_free(computer->alsa->cards);
@@ -795,18 +1073,45 @@ void hi_module_deinit(void)
 void hi_module_init(void)
 {
     computer = g_new0(Computer, 1);
+    init_memory_labels();
 }
 
-ModuleAbout *hi_module_get_about(void)
+const ModuleAbout *hi_module_get_about(void)
 {
-    static ModuleAbout ma[] = {
-    {
-     .author = "Leandro A. F. Pereira",
-     .description = N_("Gathers high-level computer information"),
-     .version = VERSION,
-     .license = "GNU GPL version 2"}
+    static const ModuleAbout ma = {
+        .author = "L. A. F. Pereira",
+        .description = N_("Gathers high-level computer information"),
+        .version = VERSION,
+        .license = "GNU GPL version 2",
     };
 
-    return ma;
+    return &ma;
 }
 
+static const gchar *hinote_kmod() {
+    static gchar note[note_max_len] = "";
+    gboolean ok = TRUE;
+    *note = 0; /* clear */
+    ok &= note_require_tool("lsmod", note, _("<i><b>lsmod</b></i> is required."));
+    return ok ? NULL : g_strstrip(note); /* remove last \n */
+}
+
+static const gchar *hinote_display() {
+    static gchar note[note_max_len] = "";
+    gboolean ok = TRUE;
+    *note = 0; /* clear */
+    ok &= note_require_tool("xrandr", note, _("X.org's <i><b>xrandr</b></i> utility provides additional details when available."));
+    ok &= note_require_tool("glxinfo", note, _("Mesa's <i><b>glxinfo</b></i> utility is required for OpenGL information."));
+    return ok ? NULL : g_strstrip(note); /* remove last \n */
+}
+
+const gchar *hi_note_func(gint entry)
+{
+    if (entry == ENTRY_KMOD) {
+        return hinote_kmod();
+    }
+    else if (entry == ENTRY_DISPLAY) {
+        return hinote_display();
+    }
+    return NULL;
+}

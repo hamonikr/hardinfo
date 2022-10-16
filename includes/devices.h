@@ -48,10 +48,6 @@ gchar *processor_describe_default(GSList * processors);
 gchar *processor_describe_by_counting_names(GSList * processors);
 gchar *processor_frequency_desc(GSList *processors);
 
-/* Memory */
-void init_memory_labels(void);
-void scan_memory_do(void);
-
 /* Printers */
 void init_cups(void);
 
@@ -65,14 +61,11 @@ void scan_pci_do(void);
 void scan_printers_do(void);
 
 /* Sensors */
-void scan_sensors_do(void);
-void sensors_init(void);
-void sensors_shutdown(void);
+#define SENSORS_GROUP_BY_TYPE 1
 
-#if defined(ARCH_x86) || defined(ARCH_x86_64)
-/* SPD */
-void scan_spd_do(void);
-#endif /* ARCH_x86 */
+void scan_sensors_do(void);
+void sensor_init(void);
+void sensor_shutdown(void);
 
 extern gchar *battery_list;
 extern gchar *input_icons;
@@ -83,20 +76,19 @@ extern gchar *pci_list;
 extern gchar *printer_icons;
 extern gchar *printer_list;
 extern gchar *sensors;
+extern gchar *sensor_icons;
 extern gchar *storage_icons;
 extern gchar *storage_list;
 extern gchar *usb_list;
-extern GHashTable *memlabels;
+extern gchar *usb_icons;
 extern GHashTable *_pci_devices;
 extern GHashTable *sensor_compute;
 extern GHashTable *sensor_labels;
 extern GModule *cups;
 
-#if defined(ARCH_x86) || defined(ARCH_x86_64)
-extern gchar *spd_info;
 extern gchar *dmi_info;
-#endif
-
 extern gchar *dtree_info;
+extern gchar *gpu_list;
+extern gchar *gpu_summary;
 
 #endif /* __DEVICES_H__ */

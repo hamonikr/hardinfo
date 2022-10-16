@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2008 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2008 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -27,6 +27,8 @@
 #include <sys/stat.h>
 
 #include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 #include <netdb.h>
 
 #include <hardinfo.h>
@@ -106,8 +108,13 @@ void scan_statistics(gboolean reload)
             gchar *tmp = buffer;
 
             while (*tmp && isspace(*tmp)) tmp++;
-
-            __statistics = h_strdup_cprintf("<b> </b>#%d=%s\n",
+                /* the bolded-space/dot used here is a hardinfo shell hack */
+                if (params.markup_ok)
+                    __statistics = h_strdup_cprintf("<b> </b>#%d=%s\n",
+                                            __statistics,
+                                            line++, tmp);
+                else
+                    __statistics = h_strdup_cprintf(">#%d=%s\n",
                                             __statistics,
                                             line++, tmp);
           }
@@ -154,7 +161,6 @@ void scan_dns(gboolean reload)
               __nameservers = h_strdup_cprintf("%s=%s\n",
                                                __nameservers,
                                                ip, hbuf);
-
           }
 
           shell_status_pulse();
@@ -427,15 +433,15 @@ void hi_module_deinit(void)
     g_free(__connections);
 }
 
-ModuleAbout *hi_module_get_about(void)
+const ModuleAbout *hi_module_get_about(void)
 {
-    static ModuleAbout ma[] = {
-	{
-	 .author = "Leandro A. F. Pereira",
-	 .description = N_("Gathers information about this computer's network connection"),
-	 .version = VERSION,
-	 .license = "GNU GPL version 2"}
+    static const ModuleAbout ma = {
+        .author = "L. A. F. Pereira",
+        .description =
+            N_("Gathers information about this computer's network connection"),
+        .version = VERSION,
+        .license = "GNU GPL version 2",
     };
 
-    return ma;
+    return &ma;
 }

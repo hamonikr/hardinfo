@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2006 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2006 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -45,6 +45,7 @@ processor_scan(void)
     gchar buffer[128];
     gchar *rep_pname = NULL;
     GSList *pi = NULL;
+    dtr *dt = dtr_new(NULL);
 
     cpuinfo = fopen(PROC_CPUINFO, "r");
     if (!cpuinfo)
@@ -162,6 +163,18 @@ processor_scan(void)
         else
             processor->cpu_mhz = 0.0f;
 
+        /* Try OPP, although if it exists, it should have been available
+         * via cpufreq. */
+        if (dt && processor->cpu_mhz == 0.0f) {
+            gchar *dt_cpu_path = g_strdup_printf("/cpus/cpu@%d", processor->id);
+            dt_opp_range *opp = dtr_get_opp_range(dt, dt_cpu_path);
+            if (opp) {
+                processor->cpu_mhz = (double)opp->khz_max / 1000;
+                g_free(opp);
+            }
+            g_free(dt_cpu_path);
+        }
+
         /* mode */
         processor->mode = ARM_A32;
         if ( processor_has_flag(processor->flags, "pmull")
@@ -173,6 +186,7 @@ processor_scan(void)
 #endif
         }
     }
+    dtr_free(dt);
 
     return procs;
 }
@@ -233,7 +247,7 @@ gchar *clocks_summary(GSList * processors)
     /* create list of all clock references */
     for (l = processors; l; l = l->next) {
         p = (Processor*)l->data;
-        if (p->cpufreq) {
+        if (p->cpufreq && p->cpufreq->cpukhz_max > 0) {
             all_clocks = g_slist_prepend(all_clocks, p->cpufreq);
         }
     }
@@ -297,10 +311,10 @@ gchar *clocks_summary(GSList * processors)
 gchar *
 processor_get_detailed_info(Processor *processor)
 {
-    gchar *tmp_flags, *tmp_imp, *tmp_part, *tmp_arch, *tmp_cpufreq, *tmp_topology, *ret;
+    gchar *tmp_flags, *tmp_imp = NULL, *tmp_part = NULL,
+        *tmp_arch, *tmp_cpufreq, *tmp_topology, *ret;
     tmp_flags = processor_get_capabilities_from_flags(processor->flags);
-    tmp_imp = (char*)arm_implementer(processor->cpu_implementer);
-    tmp_part = (char*)arm_part(processor->cpu_implementer, processor->cpu_part);
+    arm_part(processor->cpu_implementer, processor->cpu_part, &tmp_imp, &tmp_part);
     tmp_arch = (char*)arm_arch_more(processor->cpu_architecture);
 
     tmp_topology = cputopo_section_str(processor->cputopo);
@@ -361,9 +375,15 @@ gchar *processor_name(GSList *processors) {
         char *vendor;
         char *soc;
     } dt_compat_searches[] = {
-        { "brcm,bcm2837", "Broadcom", "BCM2837" },
-        { "brcm,bcm2836", "Broadcom", "BCM2836" },
-        { "brcm,bcm2835", "Broadcom", "BCM2835" },
+        { "brcm,bcm2838", "Broadcom", "BCM2838" }, // RPi 4
+        { "brcm,bcm2837", "Broadcom", "BCM2837" }, // RPi 3
+        { "brcm,bcm2836", "Broadcom", "BCM2836" }, // RPi 2
+        { "brcm,bcm2835", "Broadcom", "BCM2835" }, // RPi 1
+        { "rockchip,rk3288", "Rockchip", "RK3288" }, // Asus Tinkerboard
+        { "rockchip,rk3328", "Rockchip", "RK3328" }, // Firefly Renegade
+        { "rockchip,rk3399", "Rockchip", "RK3399" }, // Firefly Renegade Elite
+        { "rockchip,rk32", "Rockchip", "RK32xx-family" },
+        { "rockchip,rk33", "Rockchip", "RK33xx-family" },
         { "ti,omap5432", "Texas Instruments", "OMAP5432" },
         { "ti,omap5430", "Texas Instruments", "OMAP5430" },
         { "ti,omap4470", "Texas Instruments", "OMAP4470" },
@@ -395,13 +415,15 @@ gchar *processor_name(GSList *processors) {
         { "mediatek,mt6732", "MediaTek", "MT6732" },
         { "qcom,msm8939", "Qualcomm", "Snapdragon 615"},
         { "qcom,msm", "Qualcomm", "Snapdragon-family"},
-        { "nvidia,tegra" "nVidia", "Tegra-family" },
-        { "bcm,", "Broadcom", UNKSOC },
-        { "nvidia," "nVidia", UNKSOC },
-        { "rockchip," "Rockchip", UNKSOC },
+        { "nvidia,tegra", "nVidia", "Tegra-family" },
+        { "brcm,", "Broadcom", UNKSOC },
+        { "nvidia,", "nVidia", UNKSOC },
+        { "rockchip,", "Rockchip", UNKSOC },
         { "ti,", "Texas Instruments", UNKSOC },
         { "qcom,", "Qualcom", UNKSOC },
-        { "mediatek," "MediaTek", UNKSOC },
+        { "mediatek,", "MediaTek", UNKSOC },
+        { "amlogic,", "Amlogic", UNKSOC },
+        { "allwinner,", "Allwinner", UNKSOC },
         { NULL, NULL }
     };
     gchar *ret = NULL;
@@ -464,7 +486,7 @@ gchar *processor_get_info(GSList * processors)
     gchar *meta; /* becomes owned by more_info? no need to free? */
     GSList *l;
 
-    tmp = g_strdup_printf("$CPU_META$%s=\n", _("SOC/Package Information") );
+    tmp = g_strdup_printf("$!CPU_META$%s=\n", _("SOC/Package Information") );
 
     meta = processor_meta(processors);
     moreinfo_add_with_prefix("DEV", "CPU_META", meta);

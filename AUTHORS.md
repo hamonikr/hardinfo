@@ -1,4 +1,4 @@
-HardInfo was started in 2003, by Leandro Pereira, and has received
+HardInfo was started in 2003, by L. Pereira, and has received
 contributions from many people over the years.
 
 There was a time it didn't even use a version control system. The early
@@ -9,7 +9,7 @@ contributed to the project.
 
 Here is an incomplete list of contributors:
 
-* Leandro A. F. Pereira <leandro@hardinfo.org>
+* L. A. F. Pereira <l@tia.mat.br>
 * Stewart Adam <s.adam@diffingo.com>
 * Pascal F. Martin <pascalmartin@earthlink.net>
 * Burt P. <pburt0@gmail.com>
@@ -26,6 +26,8 @@ Here is an incomplete list of contributors:
 * Mattia Rizzolo <mattia@mapreri.org>
 * Yo <yoldc22@free.fr>
 * "jamesbond" (http://chiselapp.com/user/jamesbond/)
+* Ondrej Čerman <ocerman@sda1.eu>
+* Mike Hewitt <matroxmike@icloud.com>
 
 Includes code from or based on:
 

@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -27,7 +27,7 @@ typedef struct _Shell			Shell;
 typedef struct _ShellTree		ShellTree;
 typedef struct _ShellInfoTree		ShellInfoTree;
 typedef struct _ShellNote		ShellNote;
-typedef struct _ShellSummary		ShellSummary;
+typedef struct _DetailView		DetailView;
 
 typedef struct _ShellModule		ShellModule;
 typedef struct _ShellModuleMethod	ShellModuleMethod;
@@ -52,7 +52,7 @@ typedef enum {
     SHELL_VIEW_LOAD_GRAPH,
     SHELL_VIEW_PROGRESS,
     SHELL_VIEW_PROGRESS_DUAL,
-    SHELL_VIEW_SUMMARY,
+    SHELL_VIEW_DETAIL,
     SHELL_VIEW_N_VIEWS
 } ShellViewType;
 
@@ -81,14 +81,16 @@ struct _Shell {
     GtkWidget		*status, *progress;
     GtkWidget		*remote_label;
     GtkWidget		*notebook;
-    GtkWidget		*hpaned, *vpaned;
+    GtkWidget		*hbox, *vpaned;
+
+    GtkWindow		*transient_dialog;
 
     ShellTree		*tree;
-    ShellInfoTree	*info, *moreinfo;
+    ShellInfoTree	*info_tree;
     ShellModule		*selected_module;
     ShellModuleEntry	*selected;
     ShellNote		*note;
-    ShellSummary	*summary;
+    DetailView		*detail_view;
     LoadGraph		*loadgraph;
 
     GtkActionGroup	*action_group;
@@ -97,20 +99,18 @@ struct _Shell {
 
     ShellViewType	 view_type;
     gboolean		 normalize_percentage;
-    
+
     gint		_pulses;
     ShellOrderType	_order_type;
-    
+
     GKeyFile		*hosts;
     HelpViewer		*help_viewer;
 };
 
-struct _ShellSummary {
-    GtkWidget		*header;
+struct _DetailView {
     GtkWidget		*scroll;
     GtkWidget		*view;
-    
-    GSList		*items;
+    GtkWidget		*detail_box;
 };
 
 struct _ShellTree {
@@ -127,7 +127,7 @@ struct _ShellInfoTree {
     GtkWidget		*view;
     GtkTreeModel        *model;
     GtkTreeSelection	*selection;
-    
+
     GtkTreeViewColumn	 *col_progress, *col_value, *col_extra1, *col_extra2, *col_textvalue;
 };
 
@@ -141,10 +141,10 @@ struct _ShellModule {
     GdkPixbuf		*icon;
     GModule		*dll;
 
-    gpointer		(*aboutfunc) ();
+    gconstpointer 	(*aboutfunc)(void);
     gchar		*(*summaryfunc) ();
     void		(*deinit) ();
-    
+
     guchar		 weight;
 
     GSList		*entries;
@@ -162,7 +162,7 @@ struct _ShellModuleEntry {
     gboolean		 selected;
     gint		 number;
     guint32		 flags;
-    
+
     gchar		*(*func) ();
     void		(*scan_func) ();
 
@@ -196,6 +196,8 @@ void		shell_action_set_property(const gchar *action_name,
                                           const gchar *property,
                                           gboolean setting);
 
+void            shell_set_transient_dialog(GtkWindow *dialog);
+
 void		shell_set_side_pane_visible(gboolean setting);
 void		shell_set_note_from_entry(ShellModuleEntry *entry);
 void		shell_ui_manager_set_visible(const gchar *path,
@@ -219,6 +221,39 @@ void		shell_save_hosts_file(void);
 void		shell_update_remote_menu(void);
 
 void		shell_set_remote_label(Shell *shell, gchar *label);
+
+/* decode special information in keys
+ *
+ * key syntax:
+ *  [$[<flags>][<tag>]$]<name>[#[<dis>]]
+ * flags:
+ *  [[!][*][^]]
+ *  ! = show details (moreinfo) in reports
+ *  * = highlight/select this row
+ *  ^ = value is/has a vendor string
+ *  @ = label is escaped with key_label_escape()
+ */
+gboolean    key_is_flagged(const gchar *key);       /* has $[<flags>][<tag>]$ at the start of the key */
+gboolean    key_is_highlighted(const gchar *key);   /* flag '*' = select/highlight */
+gboolean    key_wants_details(const gchar *key);    /* flag '!' = report should include the "moreinfo" */
+gboolean key_value_has_vendor_string(const gchar *key); /* flag '^' = try and match the value to a vendor */
+#define key_label_escape(LBL) (gg_strescape(LBL, NULL, "=$#"))
+gboolean    key_label_is_escaped(const gchar *key); /* flag '@' = the label part is key_label_escape()-d and
+                                                     * needs to be g_strcompress()-ed before use.
+                                                     * key_get_components() will do this automatically for label. */
+gchar       *key_mi_tag(const gchar *key);          /* moreinfo lookup tag */
+const gchar *key_get_name(const gchar *key);        /* get the key's name, flagged or not */
+/*
+ * example for key = "$*!Foo$Bar#7":
+ * flags = "$*!^Foo$"  // key_is/wants_*() still works on flags
+ * tag = "Foo"        // the moreinfo/icon tag
+ * name = "Bar#7"     // the full unique name
+ * label = "Bar"      // the label displayed
+ * dis = "7"
+ */
+void key_get_components(const gchar *key,
+    gchar **flags, gchar **tag, gchar **name, gchar **label, gchar **dis,
+    gboolean null_empty);
 
 #endif				/* __SHELL_H__ */
 

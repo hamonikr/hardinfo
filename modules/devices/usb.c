@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2008 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2008 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -15,422 +15,210 @@
  *    along with this program; if not, write to the Free Software
  *    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  */
-/*
- * FIXME:
- * - listing with sysfs does not generate device hierarchy
- */
 
 #include <string.h>
 
+#include "cpu_util.h"
 #include "hardinfo.h"
 #include "devices.h"
+#include "usb_util.h"
 
 gchar *usb_list = NULL;
+gchar *usb_icons = NULL;
 
-void __scan_usb_sysfs_add_device(gchar * endpoint, int n)
-{
-    gchar *manufacturer, *product, *mxpwr, *tmp, *strhash;
-    gint bus, classid, vendor, prodid;
-    gfloat version, speed;
+#define UNKIFNULL_AC(f) (f != NULL) ? f : _("(Unknown)")
+#define IARR_END -2
+#define IARR_ANY -1
 
-    classid = h_sysfs_read_int(endpoint, "bDeviceClass");
-    vendor = h_sysfs_read_int(endpoint, "idVendor");
-    prodid = h_sysfs_read_int(endpoint, "idProduct");
-    bus = h_sysfs_read_int(endpoint, "busnum");
-    speed = h_sysfs_read_float(endpoint, "speed");
-    version = h_sysfs_read_float(endpoint, "version");
+static struct {
+    int class;
+    char *icon;
+} usb_class_icons[] = {
+    { 0x1, "audio"},            /* Audio  */
+    { 0x2, "modem"},            /* Communications and CDC Control */
+    { 0x3, "inputdevices"},     /* HID (Human Interface Device) */
+    { 0x6, "camera-photo"},     /* Still Imaging */
+    { 0x7, "printer"},          /* Printer */
+    { 0x8, "media-removable"},  /* Mass storage */
+    { 0x9, "usb"},              /* Hub */
+    { 0xe, "camera-web"},       /* Video */
+    {IARR_END, NULL}
+};
 
-    if (!(mxpwr = h_sysfs_read_string(endpoint, "bMaxPower"))) {
-    	mxpwr = g_strdup_printf("%d %s", 0 , _("mA") );
-    }
+static struct {
+    int class, subclass, protocol;
+    char *icon;
+} usb_type_icons[] = {
+    { 0x2,          0x6, IARR_ANY, "network-interface"},  /* Ethernet Networking Control Model */
+    { 0x3,          0x1,      0x1, "keyboard"},           /* Keyboard */
+    { 0x3,          0x1,      0x2, "mouse"},              /* Mouse */
+    {0xe0,          0x1,      0x1, "bluetooth"},          /* Bluetooth Programming Interface */
+    {IARR_END, IARR_END, IARR_END, NULL},
+};
 
-    if (!(manufacturer = h_sysfs_read_string(endpoint, "manufacturer"))) {
-    	manufacturer = g_strdup(_("(Unknown)"));
-    }
-
-    if (!(product = h_sysfs_read_string(endpoint, "product"))) {
-        if (classid == 9) {
-            product = g_strdup_printf(_(/*/%.2f is version*/ "USB %.2f Hub"), version);
-        } else {
-            product = g_strdup_printf(_("Unknown USB %.2f Device (class %d)"), version, classid);
+static const char* get_class_icon(int class){
+    int i = 0;
+    while (usb_class_icons[i].class != IARR_END) {
+        if (usb_class_icons[i].class == class) {
+            return usb_class_icons[i].icon;
         }
+        i++;
+    }
+    return NULL;
+}
+
+static const char* get_usbif_icon(const usbi *usbif) {
+    int i = 0;
+    while (usb_type_icons[i].class != IARR_END) {
+        if (usb_type_icons[i].class == usbif->if_class && usb_type_icons[i].subclass == usbif->if_subclass &&
+            (usb_type_icons[i].protocol == IARR_ANY || usb_type_icons[i].protocol == usbif->if_protocol)) {
+
+            return usb_type_icons[i].icon;
+        }
+        i++;
     }
 
-    const gchar *v_url = vendor_get_url(manufacturer);
-    const gchar *v_name = vendor_get_name(manufacturer);
-    gchar *v_str;
-    if (v_url != NULL) {
-        v_str = g_strdup_printf("%s (%s)", v_name, v_url);
+    return get_class_icon(usbif->if_class);
+}
+
+static const char* get_usbdev_icon(const usbd *u) {
+    const char * icon = NULL;
+    usbi *curr_if;
+
+    curr_if = u->if_list;
+    while (icon == NULL && curr_if != NULL){
+        icon = get_usbif_icon(curr_if);
+        curr_if = curr_if->next;
+    }
+
+    if (icon == NULL){
+        icon = get_class_icon(u->dev_class);
+    }
+
+    return icon;
+}
+
+static void _usb_dev(const usbd *u) {
+    gchar *name, *key, *label, *str, *speed;
+    gchar *product, *vendor, *manufacturer, *device;  /* don't free */
+    gchar *interfaces = strdup("");
+    usbi *i;
+    const char* icon;
+
+    vendor = UNKIFNULL_AC(u->vendor);
+    product = UNKIFNULL_AC(u->product);
+    manufacturer = UNKIFNULL_AC(u->manufacturer);
+    device = UNKIFNULL_AC(u->device);
+
+    if (u->vendors) {
+        gchar *ribbon = vendor_list_ribbon(u->vendors, params.fmt_opts);
+        name = g_strdup_printf("%s %s", ribbon, u->product? product: device);
     } else {
-        v_str = g_strdup_printf("%s", manufacturer);
+        name = g_strdup_printf("%s %s", u->vendor? vendor: manufacturer, u->product? product: device);
     }
+    key = g_strdup_printf("USB%03d:%03d:%03d", u->bus, u->dev, 0);
+    label = g_strdup_printf("%03d:%03d", u->bus, u->dev);
+    icon = get_usbdev_icon(u);
 
-    tmp = g_strdup_printf("USB%d", n);
-    usb_list = h_strdup_cprintf("$%s$%s=\n", usb_list, tmp, product);
+    usb_list = h_strdup_cprintf("$%s$%s=%s\n", usb_list, key, label, name);
+    usb_icons = h_strdup_cprintf("Icon$%s$%s=%s.png\n", usb_icons, key, label, icon ? icon: "usb");
 
-    strhash = g_strdup_printf("[%s]\n"
-             /* Product */      "%s=%s\n"
-             /* Manufacturer */ "%s=%s\n"
-             /* Speed */        "%s=%.2f %s\n"
-             /* Max Current */  "%s=%s\n"
-                  "[%s]\n"
-             /* USB Version */  "%s=%.2f\n"
-             /* Class */        "%s=0x%x\n"
-             /* Vendor */       "%s=0x%x\n"
-             /* Product ID */   "%s=0x%x\n"
-             /* Bus */          "%s=%d\n",
-                  _("Device Information"),
-                  _("Product"), product,
-                  _("Manufacturer"), v_str,
-                  _("Speed"), speed, _("Mbit/s"),
-                  _("Max Current"), mxpwr,
-                  _("Misc"),
-                  _("USB Version"), version,
-                  _("Class"), classid,
-                  _("Vendor ID"), vendor,
-                  _("Product ID"), prodid,
-                  _("Bus"), bus);
-
-    moreinfo_add_with_prefix("DEV", tmp, strhash);
-    g_free(tmp);
-    g_free(v_str);
-    g_free(manufacturer);
-    g_free(product);
-    g_free(mxpwr);
-}
-
-gboolean __scan_usb_sysfs(void)
-{
-    GDir *sysfs;
-    gchar *filename;
-    const gchar *sysfs_path = "/sys/class/usb_endpoint";
-    gint usb_device_number = 0;
-
-    if (!(sysfs = g_dir_open(sysfs_path, 0, NULL))) {
-	return FALSE;
-    }
-
-    if (usb_list) {
-       moreinfo_del_with_prefix("DEV:USB");
-	g_free(usb_list);
-    }
-    usb_list = g_strdup_printf("[%s]\n", _("USB Devices"));
-
-    while ((filename = (gchar *) g_dir_read_name(sysfs))) {
-	gchar *endpoint =
-	    g_build_filename(sysfs_path, filename, "device", NULL);
-	gchar *temp;
-
-	temp = g_build_filename(endpoint, "idVendor", NULL);
-	if (g_file_test(temp, G_FILE_TEST_EXISTS)) {
-	    __scan_usb_sysfs_add_device(endpoint, ++usb_device_number);
-	}
-
-	g_free(temp);
-	g_free(endpoint);
-    }
-
-    g_dir_close(sysfs);
-
-    return usb_device_number > 0;
-}
-
-gboolean __scan_usb_procfs(void)
-{
-    FILE *dev;
-    gchar buffer[128];
-    gchar *tmp, *manuf = NULL, *product = NULL, *mxpwr = NULL;
-    gint bus = 0, level = 0, port = 0, classid = 0, trash;
-    gint vendor = 0, prodid = 0;
-    gfloat ver = 0.0f, rev = 0.0f, speed = 0.0f;
-    int n = 0;
-
-    dev = fopen("/proc/bus/usb/devices", "r");
-    if (!dev)
-	return 0;
-
-    if (usb_list) {
-	moreinfo_del_with_prefix("DEV:USB");
-	g_free(usb_list);
-    }
-    usb_list = g_strdup_printf("[%s]\n", _("USB Devices"));
-
-    while (fgets(buffer, 128, dev)) {
-	tmp = buffer;
-
-	switch (*tmp) {
-	case 'T':
-	    sscanf(tmp,
-		   "T:  Bus=%d Lev=%d Prnt=%d Port=%d Cnt=%d Dev#=%d Spd=%f",
-		   &bus, &level, &trash, &port, &trash, &trash, &speed);
-	    break;
-	case 'D':
-	    sscanf(tmp, "D:  Ver=%f Cls=%x", &ver, &classid);
-	    break;
-	case 'P':
-	    sscanf(tmp, "P:  Vendor=%x ProdID=%x Rev=%f", &vendor, &prodid, &rev);
-	    break;
-	case 'S':
-	    if (strstr(tmp, "Manufacturer=")) {
-		manuf = g_strdup(strchr(tmp, '=') + 1);
-		remove_linefeed(manuf);
-	    } else if (strstr(tmp, "Product=")) {
-		product = g_strdup(strchr(tmp, '=') + 1);
-		remove_linefeed(product);
-	    }
-	    break;
-	case 'C':
-	    mxpwr = strstr(buffer, "MxPwr=") + 6;
-
-	    tmp = g_strdup_printf("USB%d", ++n);
-
-	    if (product && *product == '\0') {
-		g_free(product);
-		if (classid == 9) {
-		    product = g_strdup_printf(_("USB %.2f Hub"), ver);
-		} else {
-		    product = g_strdup_printf(_("Unknown USB %.2f Device (class %d)"), ver, classid);
-		}
-	    }
-
-        if (classid == 9) {	/* hub */
-            usb_list = h_strdup_cprintf("[%s#%d]\n", usb_list, product, n);
-        } else {		/* everything else */
-            usb_list = h_strdup_cprintf("$%s$%s=\n", usb_list, tmp, product);
-
-        EMPIFNULL(manuf);
-        const gchar *v_url = vendor_get_url(manuf);
-        const gchar *v_name = vendor_get_name(manuf);
-        gchar *v_str = NULL;
-        if (strlen(manuf)) {
-            if (v_url != NULL)
-                v_str = g_strdup_printf("%s (%s)", v_name, v_url);
-            else
-                v_str = g_strdup_printf("%s", manuf);
+    if (u->if_list != NULL) {
+        i = u->if_list;
+        while (i != NULL){
+            interfaces = h_strdup_cprintf("[%s %d %s]\n"
+                /* Class */       "%s=[%d] %s\n"
+                /* Sub-class */   "%s=[%d] %s\n"
+                /* Protocol */    "%s=[%d] %s\n"
+                /* Driver */      "%s=%s\n",
+                    interfaces,
+                    _("Interface"), i->if_number, i->if_label? i->if_label: "",
+                    _("Class"), i->if_class, UNKIFNULL_AC(i->if_class_str),
+                    _("Sub-class"), i->if_subclass, UNKIFNULL_AC(i->if_subclass_str),
+                    _("Protocol"), i->if_protocol, UNKIFNULL_AC(i->if_protocol_str),
+                    _("Driver"), UNKIFNULL_AC(i->driver)
+                );
+            i = i->next;
         }
-        UNKIFNULL(v_str);
-        UNKIFNULL(product);
-
-        gchar *strhash = g_strdup_printf("[%s]\n" "%s=%s\n" "%s=%s\n",
-                        _("Device Information"),
-                        _("Product"), product,
-                        _("Manufacturer"), v_str);
-
-        strhash = h_strdup_cprintf("[%s #%d]\n"
-                  /* Speed */       "%s=%.2f %s\n"
-                  /* Max Current */ "%s=%s\n"
-                       "[%s]\n"
-                  /* USB Version */ "%s=%.2f\n"
-                  /* Revision */    "%s=%.2f\n"
-                  /* Class */       "%s=0x%x\n"
-                  /* Vendor */      "%s=0x%x\n"
-                  /* Product ID */  "%s=0x%x\n"
-                  /* Bus */         "%s=%d\n"
-                  /* Level */       "%s=%d\n",
-                       strhash,
-                       _("Port"), port,
-                       _("Speed"), speed, _("Mbit/s"),
-                       _("Max Current"), mxpwr,
-                       _("Misc"),
-                       _("USB Version"), ver,
-                       _("Revision"), rev,
-                       _("Class"), classid,
-                       _("Vendor ID"), vendor,
-                       _("Product ID"), prodid,
-                       _("Bus"), bus,
-                       _("Level"), level);
-
-        moreinfo_add_with_prefix("DEV", tmp, strhash);
-        g_free(v_str);
-        g_free(tmp);
-        }
-
-	    g_free(manuf);
-	    g_free(product);
-	    manuf = NULL;
-	    product = NULL;
-	    port = classid = 0;
-	}
     }
 
-    fclose(dev);
-
-    return n > 0;
-}
-
-
-void __scan_usb_lsusb_add_device(char *buffer, int bufsize, FILE * lsusb, int usb_device_number)
-{
-    gint bus, device, vendor_id, product_id;
-    gchar *version = NULL, *product = NULL, *vendor = NULL, *dev_class = NULL, *int_class = NULL;
-    gchar *max_power = NULL, *name = NULL;
-    gchar *tmp, *strhash;
-    long position = 0;
-
-    g_strstrip(buffer);
-    sscanf(buffer, "Bus %d Device %d: ID %x:%x", &bus, &device, &vendor_id, &product_id);
-    name = g_strdup(buffer + 33);
-
-    for (fgets(buffer, bufsize, lsusb); position >= 0 && fgets(buffer, bufsize, lsusb); position = ftell(lsusb)) {
-	g_strstrip(buffer);
-
-	if (g_str_has_prefix(buffer, "idVendor")) {
-	    g_free(vendor);
-	    vendor = g_strdup(buffer + 26);
-	} else if (g_str_has_prefix(buffer, "idProduct")) {
-	    g_free(product);
-	    product = g_strdup(buffer + 26);
-	} else if (g_str_has_prefix(buffer, "MaxPower")) {
-	    g_free(max_power);
-	    max_power = g_strdup(buffer + 9);
-	} else if (g_str_has_prefix(buffer, "bcdUSB")) {
-	    g_free(version);
-	    version = g_strdup(buffer + 7);
-	} else if (g_str_has_prefix(buffer, "bDeviceClass")) {
-	    g_free(dev_class);
-	    dev_class = g_strdup(buffer + 14);
-	} else if (g_str_has_prefix(buffer, "bInterfaceClass")) {
-	    g_free(int_class);
-	    int_class = g_strdup(buffer + 16);
-	} else if (g_str_has_prefix(buffer, "Bus ")) {
-	    /* device separator */
-	    fseek(lsusb, position, SEEK_SET);
-	    break;
-	}
+    if (u->speed_mbs > 0){
+        speed = g_strdup_printf("%d %s", u->speed_mbs, _("Mb/s"));
+    }
+    else{
+        speed = g_strdup(_("Unknown"));
     }
 
-    if (dev_class && strstr(dev_class, "0 (Defined at Interface level)")) {
-        g_free(dev_class);
-        if (int_class) {
-            dev_class = int_class;
-        } else {
-            dev_class = g_strdup(_("(Unknown)"));
-        }
-    } else
-    dev_class = g_strdup(_("(Unknown)"));
-
-    tmp = g_strdup_printf("USB%d", usb_device_number);
-    usb_list = h_strdup_cprintf("$%s$%s=\n", usb_list, tmp, name);
-
-    const gchar *v_url = vendor_get_url(vendor);
-    const gchar *v_name = vendor_get_name(vendor);
-    gchar *v_str;
-    if (v_url != NULL) {
-        v_str = g_strdup_printf("%s (%s)", v_name, v_url);
-    } else {
-        v_str = g_strdup_printf("%s", g_strstrip(vendor) );
-    }
-
-    if (max_power != NULL) {
-        int mA = atoi(g_strstrip(max_power));
-        gchar *trent_steel = g_strdup_printf("%d %s", mA, _("mA"));
-        g_free(max_power);
-        max_power = trent_steel;
-    }
-
-    UNKIFNULL(product);
-    UNKIFNULL(v_str);
-    UNKIFNULL(max_power);
-    UNKIFNULL(version);
-    UNKIFNULL(dev_class);
-
-    strhash = g_strdup_printf("[%s]\n"
-             /* Product */      "%s=%s\n"
-             /* Manufacturer */ "%s=%s\n"
-             /* Max Current */  "%s=%s\n"
-                            "[%s]\n"
+    str = g_strdup_printf("[%s]\n"
+             /* Product */      "%s=[0x%04x] %s\n"
+             /* Vendor */       "$^$%s=[0x%04x] %s\n"
+             /* Device */       "%s=%s\n"
+             /* Manufacturer */ "$^$%s=%s\n"
+             /* Max Current */  "%s=%d %s\n"
              /* USB Version */ "%s=%s\n"
-             /* Class */       "%s=%s\n"
-             /* Vendor ID */   "%s=0x%x\n"
-             /* Product ID */  "%s=0x%x\n"
-             /* Bus */         "%s=%d\n",
+             /* Speed */       "%s=%s\n"
+             /* Class */       "%s=[%d] %s\n"
+             /* Sub-class */   "%s=[%d] %s\n"
+             /* Protocol */    "%s=[%d] %s\n"
+             /* Dev Version */ "%s=%s\n"
+             /* Serial */      "%s=%s\n"
+                            "[%s]\n"
+             /* Bus */         "%s=%03d\n"
+             /* Device */      "%s=%03d\n"
+             /* Interfaces */  "%s",
                 _("Device Information"),
-                _("Product"), g_strstrip(product),
-                _("Vendor"), v_str,
-                _("Max Current"), g_strstrip(max_power),
-                _("Misc"),
-                _("USB Version"), g_strstrip(version),
-                _("Class"), g_strstrip(dev_class),
-                _("Vendor ID"), vendor_id,
-                _("Product ID"), product_id,
-                _("Bus"), bus);
+                _("Product"), u->product_id, product,
+                _("Vendor"), u->vendor_id, vendor,
+                _("Device"), device,
+                _("Manufacturer"), manufacturer,
+                _("Max Current"), u->max_curr_ma, _("mA"),
+                _("USB Version"), u->usb_version,
+                _("Speed"), speed,
+                _("Class"), u->dev_class, UNKIFNULL_AC(u->dev_class_str),
+                _("Sub-class"), u->dev_subclass, UNKIFNULL_AC(u->dev_subclass_str),
+                _("Protocol"), u->dev_protocol, UNKIFNULL_AC(u->dev_protocol_str),
+                _("Device Version"), UNKIFNULL_AC(u->device_version),
+                _("Serial Number"), UNKIFNULL_AC(u->serial),
+                _("Connection"),
+                _("Bus"), u->bus,
+                _("Device"), u->dev,
+                interfaces
+                );
 
-    moreinfo_add_with_prefix("DEV", tmp, strhash);
-    g_free(v_str);
-    g_free(vendor);
-    g_free(product);
-    g_free(max_power);
-    g_free(dev_class);
-    g_free(version);
-    g_free(tmp);
+    moreinfo_add_with_prefix("DEV", key, str); /* str now owned by morinfo */
+
+    g_free(speed);
     g_free(name);
+    g_free(key);
+    g_free(label);
+    g_free(interfaces);
 }
 
-gboolean __scan_usb_lsusb(void)
-{
-    static gchar *lsusb_path = NULL;
-    int usb_device_number = 0;
-    FILE *lsusb;
-    FILE *temp_lsusb;
-    char buffer[512], *temp;
+void __scan_usb(void) {
+    usbd *list = usb_get_device_list();
+    usbd *curr = list;
 
-    if (!lsusb_path) {
-        if (!(lsusb_path = find_program("lsusb"))) {
-            DEBUG("lsusb not found");
-
-            return FALSE;
-        }
-    }
-
-    temp = g_strdup_printf("%s -v | tr '[]' '()'", lsusb_path);
-    if (!(lsusb = popen(temp, "r"))) {
-        DEBUG("cannot run %s", lsusb_path);
-
-        g_free(temp);
-        return FALSE;
-    }
-
-    temp_lsusb = tmpfile();
-    if (!temp_lsusb) {
-        DEBUG("cannot create temporary file for lsusb");
-        pclose(lsusb);
-	 g_free(temp);
-        return FALSE;
-    }
-
-    while (fgets(buffer, sizeof(buffer), lsusb)) {
-        fputs(buffer, temp_lsusb);
-    }
-
-    pclose(lsusb);
-
-    // rewind file so we can read from it
-    fseek(temp_lsusb, 0, SEEK_SET);
-
-    g_free(temp);
+    int c = usbd_list_count(list);
 
     if (usb_list) {
-       moreinfo_del_with_prefix("DEV:USB");
+        moreinfo_del_with_prefix("DEV:USB");
         g_free(usb_list);
     }
+    if (usb_icons){
+       g_free(usb_icons);
+       usb_icons = NULL;
+    }
     usb_list = g_strdup_printf("[%s]\n", _("USB Devices"));
 
-    while (fgets(buffer, sizeof(buffer), temp_lsusb)) {
-        if (g_str_has_prefix(buffer, "Bus ")) {
-           __scan_usb_lsusb_add_device(buffer, sizeof(buffer), temp_lsusb, ++usb_device_number);
+    if (c > 0) {
+        while(curr) {
+            _usb_dev(curr);
+            curr=curr->next;
         }
-    }
 
-    fclose(temp_lsusb);
-
-    return usb_device_number > 0;
-}
-
-void __scan_usb(void)
-{
-    if (!__scan_usb_procfs()) {
-        if (!__scan_usb_sysfs()) {
-             __scan_usb_lsusb();
-        }
+        usbd_list_free(list);
+    } else {
+        /* No USB? */
+        usb_list = g_strconcat(usb_list, _("No USB devices found."), "=\n", NULL);
     }
 }

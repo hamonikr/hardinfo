@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -23,9 +23,11 @@
  */
 #include <unistd.h>
 #include <sys/types.h>
+#include <inttypes.h> /* for PRIu64 */
 #include <endian.h>
 #include "hardinfo.h"
 #include "dt_util.h"
+#include "appf.h"
 
 static struct {
     char *name; int type;
@@ -48,6 +50,17 @@ static struct {
     { "dmas", DTP_DMAS },
     { "dma-channels", DTP_UINT },
     { "dma-requests", DTP_UINT },
+
+    /* operating-points-v2: */
+    /* https://www.kernel.org/doc/Documentation/devicetree/bindings/opp/opp.txt */
+    { "operating-points-v2", DTP_PH_REF_OPP2 },
+    { "opp-hz", DTP_UINT64 },
+    { "opp-microvolt", DTP_UINT },
+    { "opp-microvolt-L0", DTP_UINT }, /* opp-microvolt-<named>, but this kind of */
+    { "opp-microvolt-L1", DTP_UINT }, /* wildcard matching isn't supported yet */
+    { "opp-microamp", DTP_UINT },
+    { "clock-latency-ns", DTP_UINT },
+
     { NULL, 0 },
 };
 
@@ -82,6 +95,7 @@ struct _dtr_obj {
         void *data;
         char *data_str;
         dt_uint *data_int;
+        dt_uint64 *data_int64;
     };
     char *name;
     uint32_t length;
@@ -128,7 +142,7 @@ void dtr_map_free(dtr_map *map) {
 void dtr_map_sort(dtr_map *map, int sv)
 {
     int done = 0, cmp;
-    dtr_map *this, *next, *top, *next_top;
+    dtr_map *this, *next, *top = NULL, *next_top;
     uint32_t tmp_v;
     char *tmp_l, *tmp_p;
     if (map == NULL) return;
@@ -207,6 +221,8 @@ const char *dtr_symbol_lookup_by_path(dtr *s, const char* path) {
 void _dtr_read_aliases(dtr *);
 void _dtr_read_symbols(dtr *);
 void _dtr_map_phandles(dtr *, char *np);
+int dtr_inh_find(dtr_obj *obj, char *qprop, int limit);
+#define UMIN(a,b) MIN(((uint32_t)(a)), ((uint32_t)(b)))
 
 const char *dtr_find_device_tree_root() {
     char *candidates[] = {
@@ -462,8 +478,25 @@ uint32_t dtr_get_prop_u32(dtr *s, dtr_obj *node, const char *name) {
 
     ptmp = g_strdup_printf("%s/%s", (node == NULL) ? "" : node->path, name);
     prop = dtr_obj_read(s, ptmp);
-    if (prop != NULL && prop->data != NULL) {
-        ret = be32toh(*prop->data_int);
+    if (prop != NULL) {
+        if (prop->data != NULL)
+            ret = be32toh(*prop->data_int);
+        dtr_obj_free(prop);
+    }
+    g_free(ptmp);
+    return ret;
+}
+
+uint64_t dtr_get_prop_u64(dtr *s, dtr_obj *node, const char *name) {
+    dtr_obj *prop;
+    char *ptmp;
+    uint64_t ret = 0;
+
+    ptmp = g_strdup_printf("%s/%s", (node == NULL) ? "" : node->path, name);
+    prop = dtr_obj_read(s, ptmp);
+    if (prop != NULL) {
+        if (prop->data != NULL)
+            ret = be64toh(*prop->data_int64);
         dtr_obj_free(prop);
     }
     g_free(ptmp);
@@ -472,7 +505,7 @@ uint32_t dtr_get_prop_u32(dtr *s, dtr_obj *node, const char *name) {
 
 int dtr_guess_type(dtr_obj *obj) {
     char *tmp, *dash;
-    int i = 0, anc = 0, might_be_str = 1;
+    uint32_t i = 0, anc = 0, might_be_str = 1;
 
     if (obj->length == 0)
         return DTP_EMPTY;
@@ -486,13 +519,13 @@ int dtr_guess_type(dtr_obj *obj) {
         }
     }
 
-    /* /aliases/* and /__symbols__/* are always strings */
+    /* /aliases/ * and /__symbols__/ * are always strings */
     if (strncmp(obj->path, "/aliases/", strlen("/aliases/") ) == 0)
         return DTP_STR;
     if (strncmp(obj->path, "/__symbols__/", strlen("/__symbols__/") ) == 0)
         return DTP_STR;
 
-    /* /__overrides__/* */
+    /* /__overrides__/ * */
     if (strncmp(obj->path, "/__overrides__/", strlen("/__overrides__/") ) == 0)
         if (strcmp(obj->name, "name") != 0)
             return DTP_OVR;
@@ -525,7 +558,7 @@ int dtr_guess_type(dtr_obj *obj) {
     return DTP_UNK;
 }
 
-char *dtr_elem_phref(dtr *s, dt_uint e, int show_path) {
+char *dtr_elem_phref(dtr *s, dt_uint e, int show_path, const char *extra) {
     const char *ph_path, *al_label;
     char *ret = NULL;
     ph_path = dtr_phandle_lookup(s, be32toh(e));
@@ -534,17 +567,31 @@ char *dtr_elem_phref(dtr *s, dt_uint e, int show_path) {
         al_label = dtr_symbol_lookup_by_path(s, ph_path);
         if (al_label != NULL) {
             if (show_path)
-                ret = g_strdup_printf("&%s (%s)", al_label, ph_path);
+                ret = g_strdup_printf("&%s (%s) %s", al_label, ph_path, extra ? extra : "");
             else
-                ret = g_strdup_printf("&%s", al_label);
+                ret = g_strdup_printf("&%s %s", al_label, extra ? extra : "");
         } else {
             if (show_path)
-                ret = g_strdup_printf("0x%x (%s)", be32toh(e), ph_path);
+                ret = g_strdup_printf("0x%x (%s) %s", be32toh(e), ph_path, extra ? extra : "");
         }
     }
     if (ret == NULL)
         ret = dtr_elem_hex(e);
     return ret;
+}
+
+char *dtr_elem_oppv2(dtr_obj* obj) {
+    char opp_str[512] = "";
+    dtr_obj *parent = dtr_get_parent_obj(obj);
+    if (parent) {
+        dt_opp_range *opp = dtr_get_opp_range(obj->dt, parent->path);
+        if (opp) {
+            snprintf(opp_str, 511, "[%d - %d %s]", opp->khz_min, opp->khz_max, _("kHz"));
+            g_free(opp);
+        }
+        dtr_obj_free(parent);
+    }
+    return dtr_elem_phref(obj->dt, *obj->data_int, 1, opp_str);
 }
 
 char *dtr_elem_hex(dt_uint e) {
@@ -559,6 +606,10 @@ char *dtr_elem_uint(dt_uint e) {
     return g_strdup_printf("%u", be32toh(e) );
 }
 
+char *dtr_elem_uint64(dt_uint64 e) {
+    return g_strdup_printf("%" PRIu64, be64toh(e) );
+}
+
 char *dtr_list_byte(uint8_t *bytes, unsigned long count) {
     char *ret, *dest;
     char buff[4] = "";  /* max element: " 00\0" */
@@ -571,8 +622,7 @@ char *dtr_list_byte(uint8_t *bytes, unsigned long count) {
     dest = ret + 1;
     for (i = 0; i < count; i++) {
         v = bytes[i];
-        sprintf(buff, "%s%02x", (i) ? " " : "", v);
-        l = strlen(buff);
+        l = sprintf(buff, "%s%02x", (i) ? " " : "", v);
         strncpy(dest, buff, l);
         dest += l;
     }
@@ -588,8 +638,7 @@ char *dtr_list_hex(dt_uint *list, unsigned long count) {
     dest = ret = malloc(l);
     memset(ret, 0, l);
     for (i = 0; i < count; i++) {
-        sprintf(buff, "%s0x%x", (i) ? " " : "", be32toh(list[i]));
-        l = strlen(buff);
+        l = sprintf(buff, "%s0x%x", (i) ? " " : "", be32toh(list[i]));
         strncpy(dest, buff, l);
         dest += l;
     }
@@ -626,21 +675,22 @@ char *dtr_list_override(dtr_obj *obj) {
     char *ret = NULL;
     char *ph, *str;
     char *src;
-    int l, consumed = 0;
+    uint32_t consumed = 0;
+    int l;
     src = obj->data_str;
     while (consumed + 5 <= obj->length) {
-        ph = dtr_elem_phref(obj->dt, *(dt_uint*)src, 1);
+        ph = dtr_elem_phref(obj->dt, *(dt_uint*)src, 1, NULL);
         src += 4; consumed += 4;
         l = strlen(src) + 1; /* consume the null */
         str = dtr_list_str0(src, l);
-        ret = appf(ret, "<%s -> %s>", ph, str);
+        ret = appfsp(ret, "<%s -> %s>", ph, str);
         src += l; consumed += l;
         free(ph);
         free(str);
     }
     if (consumed < obj->length) {
-        str = dtr_list_byte(src, obj->length - consumed);
-        ret = appf(ret, "%s", str);
+        str = dtr_list_byte((uint8_t*)src, obj->length - consumed);
+        ret = appfsp(ret, "%s", str);
         free(str);
     }
     return ret;
@@ -661,17 +711,17 @@ char *dtr_list_phref(dtr_obj *obj, char *ext_cell_prop) {
     /* <phref, #XXX-cells> */
     int count = obj->length / 4;
     int i = 0, ext_cells = 0;
-    char *ph_path;
     char *ph, *ext, *ret = NULL;
+
     while (i < count) {
         if (ext_cell_prop == NULL)
             ext_cells = 0;
         else
             ext_cells = dtr_get_phref_prop(obj->dt, be32toh(obj->data_int[i]), ext_cell_prop);
-        ph = dtr_elem_phref(obj->dt, obj->data_int[i], 0); i++;
+        ph = dtr_elem_phref(obj->dt, obj->data_int[i], 0, NULL); i++;
         if (ext_cells > count - i) ext_cells = count - i;
         ext = dtr_list_hex((obj->data_int + i), ext_cells); i+=ext_cells;
-        ret = appf(ret, "<%s%s%s>",
+        ret = appfsp(ret, "<%s%s%s>",
             ph, (ext_cells) ? " " : "", ext);
         g_free(ph);
         g_free(ext);
@@ -697,9 +747,9 @@ char *dtr_list_interrupts(dtr_obj *obj) {
 
     count = obj->length / 4;
     while (i < count) {
-        icells = MIN(icells, count - i);
+        icells = UMIN(icells, count - i);
         ext = dtr_list_hex((obj->data_int + i), icells); i+=icells;
-        ret = appf(ret, "<%s>", ext);
+        ret = appfsp(ret, "<%s>", ext);
     }
     return ret;
 
@@ -711,13 +761,12 @@ intr_err:
 char *dtr_list_reg(dtr_obj *obj) {
     char *tup_str, *ret = NULL;
     uint32_t acells, scells, tup_len;
-    uint32_t tups, extra, consumed; /* extra and consumed are bytes */
+    uint32_t extra, consumed; /* bytes */
     uint32_t *next;
 
     acells = dtr_inh_find(obj, "#address-cells", 2);
     scells = dtr_inh_find(obj, "#size-cells", 2);
     tup_len = acells + scells;
-    tups = obj->length / (tup_len * 4);
     extra = obj->length % (tup_len * 4);
     consumed = 0; /* bytes */
 
@@ -734,7 +783,7 @@ char *dtr_list_reg(dtr_obj *obj) {
     consumed = 0;
     while (consumed + (tup_len * 4) <= obj->length) {
         tup_str = dtr_list_hex(next, tup_len);
-        ret = appf(ret, "<%s>", tup_str);
+        ret = appfsp(ret, "<%s>", tup_str);
         free(tup_str);
         consumed += (tup_len * 4);
         next += tup_len;
@@ -800,15 +849,21 @@ char* dtr_str(dtr_obj *obj) {
                 ret = dtr_list_hex(obj->data, obj->length / 4);
             break;
         case DTP_PH_REF:
-            ret = dtr_elem_phref(obj->dt, *obj->data_int, 1);
+            ret = dtr_elem_phref(obj->dt, *obj->data_int, 1, NULL);
+            break;
+        case DTP_PH_REF_OPP2:
+            ret = dtr_elem_oppv2(obj);
             break;
         case DTP_UINT:
             ret = dtr_elem_uint(*obj->data_int);
             break;
+        case DTP_UINT64:
+            ret = dtr_elem_uint64(*obj->data_int64);
+            break;
         case DTP_UNK:
         default:
             if (obj->length > 64) /* maybe should use #define at the top */
-                ret = g_strdup_printf(ret, "{data} (%lu bytes)", obj->length);
+                ret = g_strdup_printf("{data} (%lu bytes)", (long unsigned int)obj->length);
             else
                 ret = dtr_list_byte((uint8_t*)obj->data, obj->length);
             break;
@@ -839,7 +894,7 @@ dtr_obj *dtr_get_parent_obj(dtr_obj *obj) {
 
 /* find the value of a path-inherited property by climbing the path */
 int dtr_inh_find(dtr_obj *obj, char *qprop, int limit) {
-    dtr_obj *tobj, *pobj, *qobj;
+    dtr_obj *tobj, *pobj = NULL, *qobj;
     uint32_t ret = 0;
     int i, found = 0;
 
@@ -878,6 +933,118 @@ int dtr_inh_find(dtr_obj *obj, char *qprop, int limit) {
     return ret;
 }
 
+dt_opp_range *dtr_get_opp_range(dtr *s, const char *name) {
+    dt_opp_range *ret = NULL;
+    dtr_obj *obj = NULL, *table_obj = NULL, *row_obj = NULL;
+    uint32_t opp_ph = 0;
+    const char *opp_table_path = NULL;
+    char *tab_compat = NULL, *tab_status = NULL;
+    const gchar *fn;
+    gchar *full_path;
+    GDir *dir;
+    uint64_t khz = 0;
+    uint32_t lns = 0;
+    char *row_status = NULL;
+    uint32_t i = 0;
+
+    if (!s)
+        return NULL;
+
+    obj = dtr_obj_read(s, name);
+    if (!obj)
+        goto get_opp_finish;
+
+    opp_ph = dtr_get_prop_u32(s, obj, "operating-points-v2"); /* OPPv2 */
+    table_obj = dtr_get_prop_obj(s, obj, "operating-points"); /* OPPv1 */
+    if (!opp_ph) {
+        if (table_obj) {
+            /* only v1 */
+            ret = g_new0(dt_opp_range, 1);
+            ret->version = 1;
+            ret->clock_latency_ns = dtr_get_prop_u32(s, obj, "clock-latency");
+
+            /* pairs of (kHz,uV) */
+            for (i = 0; i < table_obj->length; i += 2) {
+                khz = table_obj->data_int[i];
+                if (khz > ret->khz_max)
+                    ret->khz_max = khz;
+                if (khz < ret->khz_min || ret->khz_min == 0)
+                    ret->khz_min = khz;
+            }
+
+        } else {
+            /* is clock-frequency available? */
+            khz = dtr_get_prop_u32(s, obj, "clock-frequency");
+            if (khz) {
+                ret = g_new0(dt_opp_range, 1);
+                ret->version = 0;
+                ret->khz_max = khz;
+                ret->clock_latency_ns = dtr_get_prop_u32(s, obj, "clock-latency");
+            }
+        }
+        goto get_opp_finish;
+    } else {
+        /* use v2 if both available */
+        dtr_obj_free(table_obj);
+        table_obj = NULL;
+    }
+
+    opp_table_path = dtr_phandle_lookup(s, opp_ph);
+    if (!opp_table_path)
+        goto get_opp_finish;
+
+    table_obj = dtr_obj_read(s, opp_table_path);
+    if (!table_obj)
+        goto get_opp_finish;
+
+    tab_compat = dtr_get_prop_str(s, table_obj, "compatible");
+    tab_status = dtr_get_prop_str(s, table_obj, "status");
+
+    if (!tab_compat || strcmp(tab_compat, "operating-points-v2") != 0)
+        goto get_opp_finish;
+    if (tab_status && strcmp(tab_status, "disabled") == 0)
+        goto get_opp_finish;
+
+    ret = g_new0(dt_opp_range, 1);
+    ret->version = 2;
+    ret->phandle = opp_ph;
+
+    full_path = dtr_obj_full_path(table_obj);
+    dir = g_dir_open(full_path, 0 , NULL);
+    if (dir) {
+        while((fn = g_dir_read_name(dir)) != NULL) {
+            row_obj = dtr_get_prop_obj(s, table_obj, fn);
+            if (row_obj->type == DT_NODE) {
+                row_status = dtr_get_prop_str(s, row_obj, "status");
+                if (!row_status || strcmp(row_status, "disabled") != 0) {
+                    khz = dtr_get_prop_u64(s, row_obj, "opp-hz");
+                    khz /= 1000; /* 64b hz -> 32b khz */
+                    lns = dtr_get_prop_u32(s, row_obj, "clock-latency-ns");
+                    if (khz > ret->khz_max)
+                        ret->khz_max = khz;
+                    if (khz < ret->khz_min || ret->khz_min == 0)
+                        ret->khz_min = khz;
+                    ret->clock_latency_ns = lns;
+                }
+            }
+            free(row_status); row_status = NULL;
+            dtr_obj_free(row_obj);
+            row_obj = NULL;
+        }
+        g_dir_close(dir);
+    }
+    g_free(full_path);
+
+get_opp_finish:
+    dtr_obj_free(obj);
+    dtr_obj_free(table_obj);
+    free(tab_status);
+    free(tab_compat);
+    free(row_status);
+    return ret;
+}
+
+
 void _dtr_read_aliases(dtr *s) {
     gchar *dir_path;
     GDir *dir;
@@ -900,8 +1067,8 @@ void _dtr_read_aliases(dtr *s) {
             }
             dtr_obj_free(prop);
         }
+        g_dir_close(dir);
     }
-    g_dir_close(dir);
     g_free(dir_path);
     dtr_obj_free(anode);
     dtr_map_sort(s->aliases, 0);
@@ -929,8 +1096,8 @@ void _dtr_read_symbols(dtr *s) {
             }
             dtr_obj_free(prop);
         }
+        g_dir_close(dir);
     }
-    g_dir_close(dir);
     g_free(dir_path);
     dtr_obj_free(anode);
     dtr_map_sort(s->symbols, 0);
@@ -944,7 +1111,6 @@ void _dtr_map_phandles(dtr *s, char *np) {
     GDir *dir;
     dtr_obj *prop, *ph_prop;
     dtr_map *ph;
-    uint32_t phandle;
 
     if (np == NULL) np = "";
     dir_path = g_strdup_printf("%s/%s", s->base_path, np);
@@ -970,8 +1136,8 @@ void _dtr_map_phandles(dtr *s, char *np) {
             }
             g_free(ftmp);
         }
+        g_dir_close(dir);
     }
-    g_dir_close(dir);
     dtr_obj_free(prop);
     dtr_map_sort(s->phandles, 1);
 }
@@ -1019,22 +1185,3 @@ char *dtr_maps_info(dtr *s) {
     g_free(sy_map);
     return ret;
 }
-
-char *appf(char *src, char *fmt, ...) {
-    gchar *buf, *ret;
-    va_list args;
-
-    va_start(args, fmt);
-    buf = g_strdup_vprintf(fmt, args);
-    va_end(args);
-
-    if (src != NULL) {
-        ret = g_strdup_printf("%s%s%s", src, sp_sep(src), buf);
-        g_free(buf);
-        g_free(src);
-    } else
-        ret = buf;
-
-    return ret;
-}
-

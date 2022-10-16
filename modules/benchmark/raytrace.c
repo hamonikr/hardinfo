@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -17,6 +17,10 @@
  */
 
 #include "benchmark.h"
+
+/* if anything changes in this block, increment revision */
+#define BENCH_REVISION 0
+#define STEPS 1000
 
 void fbench();	/* fbench.c */
 
@@ -40,8 +44,10 @@ benchmark_raytrace(void)
     shell_view_set_enabled(FALSE);
     shell_status_update("Performing John Walker's FBENCH...");
 
-    r = benchmark_parallel_for(0, 0, 1000, parallel_raytrace, NULL);
+    r = benchmark_parallel_for(0, 0, STEPS, parallel_raytrace, NULL);
     r.result = r.elapsed_time;
+    r.revision = BENCH_REVISION;
+    snprintf(r.extra, 255, "r:%d", STEPS);
 
     bench_results[BENCHMARK_RAYTRACE] = r;
 }

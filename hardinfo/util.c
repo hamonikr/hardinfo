@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -384,16 +384,27 @@ log_handler(const gchar * log_domain,
 void parameters_init(int *argc, char ***argv, ProgramParameters * param)
 {
     static gboolean create_report = FALSE;
+    static gboolean force_all_details = FALSE;
     static gboolean show_version = FALSE;
     static gboolean list_modules = FALSE;
     static gboolean autoload_deps = FALSE;
     static gboolean run_xmlrpc_server = FALSE;
+    static gboolean skip_benchmarks = FALSE;
+    static gboolean quiet = FALSE;
     static gchar *report_format = NULL;
     static gchar *run_benchmark = NULL;
     static gchar *result_format = NULL;
+    static gchar *bench_user_note = NULL;
     static gchar **use_modules = NULL;
+    static gint max_bench_results = 10;
 
     static GOptionEntry options[] = {
+	{
+	 .long_name = "quiet",
+	 .short_name = 'q',
+	 .arg = G_OPTION_ARG_NONE,
+	 .arg_data = &quiet,
+	 .description = N_("do not print status messages to standard output")},
 	{
 	 .long_name = "generate-report",
 	 .short_name = 'r',
@@ -405,7 +416,7 @@ void parameters_init(int *argc, char ***argv, ProgramParameters * param)
 	 .short_name = 'f',
 	 .arg = G_OPTION_ARG_STRING,
 	 .arg_data = &report_format,
-	 .description = N_("chooses a report format (text, html)")},
+	 .description = N_("chooses a report format ([text], html)")},
 	{
 	 .long_name = "run-benchmark",
 	 .short_name = 'b',
@@ -413,11 +424,23 @@ void parameters_init(int *argc, char ***argv, ProgramParameters * param)
 	 .arg_data = &run_benchmark,
 	 .description = N_("run benchmark; requires benchmark.so to be loaded")},
 	{
+	 .long_name = "user-note",
+	 .short_name = 'u',
+	 .arg = G_OPTION_ARG_STRING,
+	 .arg_data = &bench_user_note,
+	 .description = N_("note attached to benchmark results")},
+	{
 	 .long_name = "result-format",
 	 .short_name = 'g',
 	 .arg = G_OPTION_ARG_STRING,
 	 .arg_data = &result_format,
 	 .description = N_("benchmark result format ([short], conf, shell)")},
+	{
+	 .long_name = "max-results",
+	 .short_name = 'n',
+	 .arg = G_OPTION_ARG_INT,
+	 .arg_data = &max_bench_results,
+	 .description = N_("maximum number of benchmark results to include (-1 for no limit, default is 10)")},
 	{
 	 .long_name = "list-modules",
 	 .short_name = 'l',
@@ -450,6 +473,18 @@ void parameters_init(int *argc, char ***argv, ProgramParameters * param)
 	 .arg = G_OPTION_ARG_NONE,
 	 .arg_data = &show_version,
 	 .description = N_("shows program version and quit")},
+	{
+	 .long_name = "skip-benchmarks",
+	 .short_name = 's',
+	 .arg = G_OPTION_ARG_NONE,
+	 .arg_data = &skip_benchmarks,
+	 .description = N_("do not run benchmarks")},
+	{
+	 .long_name = "very-verbose",
+	 .short_name = 'w', /* like -vv */
+	 .arg = G_OPTION_ARG_NONE,
+	 .arg_data = &force_all_details,
+	 .description = N_("show all details")},
 	{NULL}
     };
     GOptionContext *ctx;
@@ -476,16 +511,44 @@ void parameters_init(int *argc, char ***argv, ProgramParameters * param)
     param->use_modules = use_modules;
     param->run_benchmark = run_benchmark;
     param->result_format = result_format;
+    param->max_bench_results = max_bench_results;
     param->autoload_deps = autoload_deps;
     param->run_xmlrpc_server = run_xmlrpc_server;
+    param->skip_benchmarks = skip_benchmarks;
+    param->force_all_details = force_all_details;
+    param->quiet = quiet;
     param->argv0 = *(argv)[0];
 
-    if (report_format && g_str_equal(report_format, "html"))
-	param->report_format = REPORT_FORMAT_HTML;
+    if (report_format) {
+        if (g_str_equal(report_format, "html"))
+            param->report_format = REPORT_FORMAT_HTML;
+        if (g_str_equal(report_format, "shell"))
+            param->report_format = REPORT_FORMAT_SHELL;
+    }
 
-    gchar *confdir = g_build_filename(g_get_home_dir(), ".hardinfo", NULL);
+    /* clean user note */
+    if (bench_user_note) {
+        char *p = NULL;
+        while(p = strchr(bench_user_note, ';'))  { *p = ','; }
+        param->bench_user_note =
+            gg_key_file_parse_string_as_value(bench_user_note, '|');
+    }
+
+    /* html ok?
+     * gui: yes
+     * report html: yes
+     * report text: no
+     * anything else? */
+    param->markup_ok = TRUE;
+    if (param->create_report && param->report_format != REPORT_FORMAT_HTML)
+        param->markup_ok = FALSE;
+
+    // TODO: fmt_opts: FMT_OPT_ATERM, FMT_OPT_HTML, FMT_OPT_PANGO...
+    param->fmt_opts = FMT_OPT_NONE;
+
+    gchar *confdir = g_build_filename(g_get_user_config_dir(), "hardinfo", NULL);
     if (!g_file_test(confdir, G_FILE_TEST_EXISTS)) {
-	mkdir(confdir, 0744);
+        mkdir(confdir, 0744);
     }
     g_free(confdir);
 }
@@ -500,38 +563,6 @@ gboolean ui_init(int *argc, char ***argv)
 		      G_LOG_LEVEL_ERROR, log_handler, NULL);
 
     return gtk_init_check(argc, argv);
-}
-
-void open_url(gchar * url)
-{
-    const gchar *browsers[] = {
-	"xdg-open", "gnome-open", "kfmclient openURL",
-	"sensible-browser", "firefox", "epiphany",
-	"iceweasel", "seamonkey", "galeon", "mozilla",
-	"opera", "konqueror", "netscape", "links -g",
-	NULL
-    };
-    gint i = 0;
-    gchar *browser = (gchar *)g_getenv("BROWSER");
-
-    if (!browser || *browser == '\0') {
-    	browser = (gchar *)browsers[i++];
-    }
-
-    do {
-	gchar *cmdline = g_strdup_printf("%s '%s'", browser, url);
-
-	if (g_spawn_command_line_async(cmdline, NULL)) {
-	    g_free(cmdline);
-	    return;
-	}
-
-	g_free(cmdline);
-
-    	browser = (gchar *)browsers[i++];
-    } while (browser);
-
-    g_warning(_("Couldn't find a Web browser to open URL %s."), url);
 }
 
 /* Copyright: Jens Låås, SLU 2002 */
@@ -560,7 +591,7 @@ static GHashTable *__module_methods = NULL;
 
 static void module_register_methods(ShellModule * module)
 {
-    ShellModuleMethod *(*get_methods) (void);
+    const ShellModuleMethod *(*get_methods)(void);
     gchar *method_name;
 
     if (__module_methods == NULL) {
@@ -568,8 +599,8 @@ static void module_register_methods(ShellModule * module)
     }
 
     if (g_module_symbol
-	(module->dll, "hi_exported_methods", (gpointer) & get_methods)) {
-	ShellModuleMethod *methods;
+	(module->dll, "hi_exported_methods", (gpointer)&get_methods)) {
+	const ShellModuleMethod *methods;
 
 	for (methods = get_methods(); methods->name; methods++) {
 	    ShellModuleMethod method = *methods;
@@ -710,7 +741,7 @@ static ShellModule *module_load(gchar * filename)
 
     tmp = g_build_filename(params.path_lib, "modules", filename, NULL);
     module->dll = g_module_open(tmp, G_MODULE_BIND_LAZY);
-    DEBUG("gmodule resource for ``%s'' is %p", tmp, module->dll);
+    DEBUG("gmodule resource for ``%s'' is %p (%s)", tmp, module->dll, g_module_error());
     g_free(tmp);
 
     if (module->dll) {
@@ -826,7 +857,7 @@ static void module_entry_free(gpointer data, gpointer user_data)
 }
 #endif
 
-ModuleAbout *module_get_about(ShellModule * module)
+const ModuleAbout *module_get_about(ShellModule * module)
 {
     if (module->aboutfunc) {
     	return module->aboutfunc();
@@ -994,28 +1025,6 @@ gint tree_view_get_visible_height(GtkTreeView * tv)
     return nrows * rect.height;
 }
 
-static gboolean __idle_free_do(gpointer ptr)
-{
-    g_free(ptr);
-
-    return FALSE;
-}
-
-#if RELEASE == 1
-gpointer idle_free(gpointer ptr)
-#else
-gpointer __idle_free(gpointer ptr, gchar * f, gint l)
-#endif
-{
-    DEBUG("file: %s, line: %d, ptr %p", f, l, ptr);
-
-    if (ptr) {
-	g_timeout_add(10000, __idle_free_do, ptr);
-    }
-
-    return ptr;
-}
-
 void module_entry_scan_all_except(ModuleEntry * entries, gint except_entry)
 {
     ModuleEntry entry;
@@ -1169,7 +1178,7 @@ h_hash_table_remove_all(GHashTable *hash_table)
 }
 
 gfloat
-h_sysfs_read_float(gchar *endpoint, gchar *entry)
+h_sysfs_read_float(const gchar *endpoint, const gchar *entry)
 {
 	gchar *tmp, *buffer;
 	gfloat return_value = 0.0f;
@@ -1185,7 +1194,7 @@ h_sysfs_read_float(gchar *endpoint, gchar *entry)
 }
 
 gint
-h_sysfs_read_int(gchar *endpoint, gchar *entry)
+h_sysfs_read_int(const gchar *endpoint, const gchar *entry)
 {
 	gchar *tmp, *buffer;
 	gint return_value = 0;
@@ -1200,8 +1209,24 @@ h_sysfs_read_int(gchar *endpoint, gchar *entry)
 	return return_value;
 }
 
+gint
+h_sysfs_read_hex(const gchar *endpoint, const gchar *entry)
+{
+	gchar *tmp, *buffer;
+	gint return_value = 0;
+
+	tmp = g_build_filename(endpoint, entry, NULL);
+	if (g_file_get_contents(tmp, &buffer, NULL, NULL))
+		return_value = (gint) strtoll(buffer, NULL, 16);
+
+	g_free(tmp);
+	g_free(buffer);
+
+	return return_value;
+}
+
 gchar *
-h_sysfs_read_string(gchar *endpoint, gchar *entry)
+h_sysfs_read_string(const gchar *endpoint, const gchar *entry)
 {
 	gchar *tmp, *return_value;
 
@@ -1332,6 +1357,26 @@ gboolean g_strv_contains(const gchar * const * strv, const gchar *str) {
 }
 #endif
 
+gchar *hardinfo_clean_grpname(const gchar *v, int replacing) {
+    gchar *clean, *p;
+
+    p = clean = g_strdup(v);
+    while (*p != 0) {
+        switch(*p) {
+            case '[':
+                *p = '('; break;
+            case ']':
+                *p = ')'; break;
+            default:
+                break;
+        }
+        p++;
+    }
+    if (replacing)
+        g_free((gpointer)v);
+    return clean;
+}
+
 /* Hardinfo labels that have # are truncated and/or hidden.
  * Labels can't have $ because that is the delimiter in
  * moreinfo. */
@@ -1386,4 +1431,15 @@ gchar *hardinfo_clean_value(const gchar *v, int replacing) {
     if (replacing)
         g_free((gpointer)v);
     return clean;
+}
+
+gboolean hardinfo_spawn_command_line_sync(const gchar *command_line,
+                                          gchar **standard_output,
+                                          gchar **standard_error,
+                                          gint *exit_status,
+                                          GError **error)
+{
+    shell_status_pulse();
+    return g_spawn_command_line_sync(command_line, standard_output,
+                                     standard_error, exit_status, error);
 }

@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2008 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2008 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -37,21 +37,27 @@ static gchar *_resource_obtain_name(gchar *name)
                                0, 0, NULL);
       _regex_module = g_regex_new("^[0-9a-zA-Z\\_\\-]+$", 0, 0, NULL);
     }
-    
+
     name = g_strstrip(name);
-    
+
     if (g_regex_match(_regex_pci, name, 0, NULL)) {
       temp = module_call_method_param("devices::getPCIDeviceDescription", name);
       if (temp) {
+        if (params.markup_ok)
           return g_strdup_printf("<b><small>PCI</small></b> %s", (gchar *)idle_free(temp));
+        else
+          return g_strdup_printf("PCI %s", (gchar *)idle_free(temp));
       }
     } else if (g_regex_match(_regex_module, name, 0, NULL)) {
       temp = module_call_method_param("computer::getKernelModuleDescription", name);
       if (temp) {
+        if (params.markup_ok)
           return g_strdup_printf("<b><small>Module</small></b> %s", (gchar *)idle_free(temp));
+        else
+          return g_strdup_printf("Module %s", (gchar *)idle_free(temp));
       }
     }
-    
+
     return g_strdup(name);
 }
 #else
@@ -77,10 +83,10 @@ void scan_device_resources(gboolean reload)
       { "/proc/iomem", "[Memory]\n" },
       { "/proc/dma", "[DMA]\n" }
     };
-    
+
     g_free(_resources);
     _resources = g_strdup("");
-    
+
     for (i = 0; i < G_N_ELEMENTS(resources); i++) {
       if ((io = fopen(resources[i].file, "r"))) {
         _resources = h_strconcat(_resources, resources[i].description, NULL);
@@ -92,8 +98,12 @@ void scan_device_resources(gboolean reload)
           if (strstr(temp[0], "0000-0000"))
             zero_to_zero_addr++;
 
-          _resources = h_strdup_cprintf("<tt>%s</tt>=%s\n", _resources,
-                                        temp[0], name);
+          if (params.markup_ok)
+            _resources = h_strdup_cprintf("<tt>%s</tt>=%s\n", _resources,
+                                          temp[0], name);
+          else
+            _resources = h_strdup_cprintf(">%s=%s\n", _resources,
+                                          temp[0], name);
 
           g_strfreev(temp);
           g_free(name);

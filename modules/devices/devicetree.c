@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2007 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2007 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -28,6 +28,10 @@
 #include "devices.h"
 #include "cpu_util.h"
 #include "dt_util.h"
+#include "appf.h"
+
+gchar *dtree_info = NULL;
+const char *dtree_mem_str = NULL; /* used by memory devices when nothing else is available */
 
 /* These should really go into CMakeLists.txt */
 #if defined(__arm__)
@@ -35,8 +39,6 @@
 #elif defined(__powerpc__)
 #include "devicetree/pmac_data.c"
 #endif
-
-gchar *dtree_info = NULL;
 
 static gchar *get_node(dtr *dt, char *np) {
     gchar *nodes = NULL, *props = NULL, *ret = NULL;
@@ -216,13 +218,14 @@ static gchar *get_summary(dtr *dt) {
     return ret;
 }
 
-static void mi_add(const char *key, const char *value) {
+static void mi_add(const char *key, const char *value, int report_details) {
     gchar *ckey, *rkey;
 
     ckey = hardinfo_clean_label(key, 0);
     rkey = g_strdup_printf("%s:%s", "DTREE", ckey);
 
-    dtree_info = h_strdup_cprintf("$%s$%s=\n", dtree_info, rkey, ckey);
+    dtree_info = h_strdup_cprintf("$%s%s$%s=\n", dtree_info,
+        (report_details) ? "!" : "", rkey, ckey);
     moreinfo_add_with_prefix("DEV", rkey, g_strdup(value));
 
     g_free(ckey);
@@ -241,7 +244,7 @@ static void add_keys(dtr *dt, char *np) {
     obj = dtr_obj_read(dt, np);
     dt_path = dtr_obj_path(obj);
     n_info = get_node(dt, dt_path);
-    mi_add(dt_path, n_info);
+    mi_add(dt_path, n_info, 0);
 
     dir_path = g_strdup_printf("%s/%s", dtr_base_path(dt), np);
     dir = g_dir_open(dir_path, 0 , NULL);
@@ -258,19 +261,19 @@ static void add_keys(dtr *dt, char *np) {
             }
             g_free(ftmp);
         }
+        g_dir_close(dir);
     }
-    g_dir_close(dir);
 }
 
 static char *msg_section(dtr *dt, int dump) {
     gchar *aslbl = NULL;
     gchar *messages = dtr_messages(dt);
-    gchar *ret = g_strdup_printf("[%s]\n", _("Messages"));
+    gchar *ret = g_strdup_printf("[%s]", _("Messages"));
     gchar **lines = g_strsplit(messages, "\n", 0);
     int i = 0;
     while(lines[i] != NULL) {
         aslbl = hardinfo_clean_label(lines[i], 0);
-        ret = appf(ret, "%s=\n", aslbl);
+        ret = appfnl(ret, "%s=", aslbl);
         g_free(aslbl);
         i++;
     }
@@ -289,13 +292,13 @@ void __scan_dtree()
     gchar *messages = NULL;
 
     dtree_info = g_strdup("[Device Tree]\n");
-    mi_add("Summary", summary);
-    mi_add("Maps", maps);
+    mi_add("Summary", summary, 1);
+    mi_add("Maps", maps, 0);
 
     if(dtr_was_found(dt))
         add_keys(dt, "/");
     messages = msg_section(dt, 0);
-    mi_add("Messages", messages);
+    mi_add("Messages", messages, 0);
 
     g_free(summary);
     g_free(maps);

@@ -1,6 +1,6 @@
 /*
  *    HardInfo - Displays System Information
- *    Copyright (C) 2003-2006 Leandro A. F. Pereira <leandro@hardinfo.org>
+ *    Copyright (C) 2003-2006 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
@@ -82,9 +82,9 @@ __scan_battery_apcupsd(void)
             battery_list = h_strdup_cprintf("[%s]\n", battery_list, ups_fields[i].key);
           } else {
             /* there's a name: adds a line */
+            const gchar *name = g_hash_table_lookup(ups_data, ups_fields[i].key);
             battery_list = h_strdup_cprintf("%s=%s\n", battery_list,
-                                            ups_fields[i].name,
-                                            g_hash_table_lookup(ups_data, ups_fields[i].key));
+                                            ups_fields[i].name, name);
           }
         }
 
@@ -165,12 +165,9 @@ __scan_battery_acpi(void)
           
           fclose(f);
 
-	 const gchar *url = vendor_get_url(manufacturer);
-	 if (url) {
-	   char *tmp = g_strdup_printf("%s (%s)", vendor_get_name(manufacturer), url);
-	   g_free(manufacturer);
-	   manufacturer = tmp;    
-	 }
+         gchar *tmp = vendor_get_link(manufacturer);
+         g_free(manufacturer);
+         manufacturer = tmp;
           
           if (g_str_equal(present, "yes")) {
             if (remaining && capacity)
@@ -229,11 +226,11 @@ read_contents(const gchar *base, const gchar *key)
         return NULL;
 
     if (!g_file_get_contents(path, &value, NULL, NULL)) {
-        free(path);
+        g_free(path);
         return NULL;
     }
 
-    free(path);
+    g_free(path);
     return g_strchomp(value);
 }
 
