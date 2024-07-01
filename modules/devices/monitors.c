@@ -5,7 +5,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -18,6 +18,7 @@
  */
 
 #include "devices.h"
+#include <ctype.h>
 #include "util_sysobj.h"
 #include "util_edid.h"
 #include "util_ids.h"
@@ -36,7 +37,7 @@ gchar *ieee_oui_ids_file = NULL;
 void find_edid_ids_file() {
     if (edid_ids_file) return;
     char *file_search_order[] = {
-        g_build_filename(g_get_user_config_dir(), "hardinfo", "edid.ids", NULL),
+        g_build_filename(g_get_user_config_dir(), "hardinfo2", "edid.ids", NULL),
         g_build_filename(params.path_data, "edid.ids", NULL),
         NULL
     };
@@ -53,7 +54,7 @@ void find_edid_ids_file() {
 void find_ieee_oui_ids_file() {
     if (ieee_oui_ids_file) return;
     char *file_search_order[] = {
-        g_build_filename(g_get_user_config_dir(), "hardinfo", "ieee_oui.ids", NULL),
+        g_build_filename(g_get_user_config_dir(), "hardinfo2", "ieee_oui.ids", NULL),
         g_build_filename(params.path_data, "ieee_oui.ids", NULL),
         NULL
     };
@@ -111,8 +112,9 @@ gchar *monitor_vendor_str(monitor *m, gboolean include_value, gboolean link_name
     if (!m || !m->e) return NULL;
     edid_ven ven = m->e->ven;
     gchar v[20] = "", t[4] = "";
-    ids_query_result result = {};
+    ids_query_result result;// = {};
 
+    memset(&result,0,sizeof(ids_query_result));
     if (ven.type == VEN_TYPE_PNP) {
         strcpy(v, ven.pnp);
         strcpy(t, "PNP");

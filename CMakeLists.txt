@@ -1,98 +1,214 @@
-project(HardInfo)
-cmake_minimum_required(VERSION 2.6)
-cmake_policy(VERSION 2.6)
+cmake_minimum_required(VERSION 3.0.2)
+cmake_policy(VERSION 3.0.2)
+project(hardinfo2)
 
-set(HARDINFO_VERSION "0.6-alpha")
-option(HARDINFO_GTK3 "Attempt to build for GTK3 (0/off for GTK2)" 0)
-set(OVRARCH "" CACHE STRING "Override HARDINFO_ARCH value")
-set(OVRCPUINFO "" CACHE STRING "Specify a different file for /proc/cpuinfo")
-set(OVRDTRROOT "" CACHE STRING "Specify a different path for /proc/device-tree")
-SET( CMAKE_MODULE_PATH  "${CMAKE_CURRENT_SOURCE_DIR}/cmake" )
+set(HARDINFO2_VERSION "2.1.12")
+
+option(HARDINFO2_GTK3 "Build for GTK3 (0/off for GTK2)" 1)
+option(HARDINFO2_LIBSOUP3 "Build for libsoup-3.0 (0/off for libsoup-2.4)" 1)
+
+SET(CMAKE_INSTALL_PREFIX "/usr")
+
+SET(CMAKE_MODULE_PATH  "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(GNUInstallDirs)
 
-if(${CMAKE_BUILD_TYPE} MATCHES [Dd]ebug)
-	set(HARDINFO_DEBUG 1)
-	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
-endif()
-
 if(${CMAKE_HOST_SYSTEM_NAME} MATCHES "Linux")
-	set(HARDINFO_OS "linux")
+	set(HARDINFO2_OS "linux")
 else()
 	message(FATAL_ERROR "Unsupported operating system: ${CMAKE_HOST_SYSTEM_NAME}")
 endif()
 
 if(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "i[3-6]86")
-	set(HARDINFO_ARCH "x86")
+	set(HARDINFO2_ARCH "x86")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "x86_64")
-	set(HARDINFO_ARCH "x86")
+	set(HARDINFO2_ARCH "x86")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "(ppc|ppc32|ppc64|ppc64le)")
-	set(HARDINFO_ARCH "ppc")
-elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "mips")
-	set(HARDINFO_ARCH "mips")
+	set(HARDINFO2_ARCH "ppc")
+elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "(mips|mips64el)")
+	set(HARDINFO2_ARCH "mips")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "parisc.*")
-	set(HARDINFO_ARCH "parisc")
+	set(HARDINFO2_ARCH "parisc")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "sparc{32,64}")
-	set(HARDINFO_ARCH "sparc")
+	set(HARDINFO2_ARCH "sparc")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "arm.*")
-	set(HARDINFO_ARCH "arm")
+	set(HARDINFO2_ARCH "arm")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "aarch64.*")
-	set(HARDINFO_ARCH "arm")
+	set(HARDINFO2_ARCH "arm")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "ia64")
-	set(HARDINFO_ARCH "ia64")
-elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "loongarch64")
-	set(HARDINFO_ARCH "loongarch64")
+	set(HARDINFO2_ARCH "ia64")
+elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "(loongarch64|loong64)")
+	set(HARDINFO2_ARCH "loongarch64")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "alpha")
-	set(HARDINFO_ARCH "alpha")
+	set(HARDINFO2_ARCH "alpha")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "s390.*")
-	set(HARDINFO_ARCH "s390")
+	set(HARDINFO2_ARCH "s390")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "m68k")
-	set(HARDINFO_ARCH "m68k")
+	set(HARDINFO2_ARCH "m68k")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "sh[3-5]")
-	set(HARDINFO_ARCH "sh")
+	set(HARDINFO2_ARCH "sh")
 elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "(riscv|riscv32|riscv64)")
-	set(HARDINFO_ARCH "riscv")
-elseif(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "e2k")
-        set(HARDINFO_ARCH "e2k")
+	set(HARDINFO2_ARCH "riscv")
 else()
 	message(FATAL_ERROR "Unsupported architecture: ${CMAKE_HOST_SYSTEM_PROCESSOR}")
 endif()
 
-if (OVRARCH)
-	set(HARDINFO_ARCH ${OVRARCH})
-endif()
-if (OVRCPUINFO)
-	add_definitions(-DPROC_CPUINFO=${OVRCPUINFO})
-	message(STATUS "/proc/cpuinfo override: ${OVRCPUINFO}")
-endif()
-if (OVRDTRROOT)
-	add_definitions(-DDTR_ROOT=${OVRDTRROOT})
-	message(STATUS "/proc/device-tree override: ${OVRDTRROOT}")
-endif()
 add_definitions(-DLOCALEDIR="${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LOCALEDIR}")
 message(STATUS "LOCALEDIR = ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LOCALEDIR}")
 
-message(STATUS "Building HardInfo for architecture: ${HARDINFO_OS}-${HARDINFO_ARCH}")
+message(STATUS "Building HardInfo2 for architecture: ${HARDINFO2_OS}-${HARDINFO2_ARCH}")
 
 add_definitions("-std=gnu89")
-add_definitions("-Wno-deprecated-declarations")
+add_definitions("-Wextra")
+add_definitions("-Wno-missing-field-initializers")
 add_definitions("-Wformat")
 add_definitions("-Wformat-security")
 
-add_subdirectory(po)
+set(PACKAGE_LIBSOUP2_MINVERSION 2.42)
+set(PACKAGE_LIBGLIB2_MINVERSION 2.24)
 
-include(FindPkgConfig)
-if (HARDINFO_GTK3)
-	message(STATUS "Building for GTK3 (experimental!)")
-	pkg_check_modules(GTK REQUIRED gtk+-3.0>=3.0 cairo>=1.0 cairo-png>=1.0 glib-2.0>=2.10 gthread-2.0>=2.10 gmodule-export-2.0>=2.10)
-	add_definitions(-DGTK_DISABLE_SINGLE_INCLUDES)
+#########################CPack PACKAGING SETUP###############################
+set(RPM 0)
+file(STRINGS /etc/os-release distro REGEX "^NAME=")
+string(REGEX REPLACE "NAME=" "" distro "${distro}")
+string(REGEX REPLACE "\"" "" distro "${distro}")
+string(REGEX REPLACE "/" "" distro "${distro}")
+string(REGEX REPLACE " " "" distro "${distro}")
+file(STRINGS /etc/os-release disversion REGEX "^VERSION_ID=")
+string(REGEX REPLACE "VERSION_ID=" "" disversion "${disversion}")
+string(COMPARE EQUAL "${disversion}" "" result)
+if(result)
+  #sid/rawhide with no version - use project name
+  message("-- Found no distro version - Using codename")
+  file(STRINGS /etc/os-release disversion REGEX "^VERSION_CODENAME=")
+  string(REGEX REPLACE "VERSION_CODENAME=" "" disversion "99_${disversion}")
+endif()
+string(REGEX REPLACE "\"" "" disversion "${disversion}")
+string(REGEX REPLACE "/" "" disversion "${disversion}")
+string(REGEX REPLACE " " "" disversion "${disversion}")
+#RPM Distro's
+if(${distro} MATCHES "Alma*" OR ${distro} MATCHES "Rocky*" OR ${distro} MATCHES "Fedora*" OR ${distro} MATCHES "Red*" OR ${distro} MATCHES "CentOS*" OR ${distro} MATCHES "Oracle*" OR ${distro} MATCHES "openSUSE*" OR ${distro} MATCHES "SUSE*" OR ${distro} MATCHES "PCLinuxOS*")
+  set(RPM 1)
+endif()
+#Package architecture
+if(${RPM})
+  set(PACKAGE_DELIMITER "-")
+  set(PACKAGE_ARCHITECTURE ".${CMAKE_HOST_SYSTEM_PROCESSOR}")
 else()
-	message(STATUS "Building for GTK2")
-	pkg_check_modules(GTK REQUIRED gtk+-2.0>=2.10 glib-2.0>=2.10 gthread-2.0>=2.10 gmodule-export-2.0>=2.10)
+  set(PACKAGE_DELIMITER "_")
+  set(PACKAGE_ARCHITECTURE "_${CMAKE_HOST_SYSTEM_PROCESSOR}")
+  if(${CMAKE_HOST_SYSTEM_PROCESSOR} MATCHES "x86_64")
+    set(PACKAGE_ARCHITECTURE "_amd64")
+  endif()
+endif()
+set(PACKAGE_DISTRO ${HARDINFO2_VERSION}-${distro}-${disversion}${CPACK_SYSTEM_NAME})
+SET(CPACK_PACKAGE_VERSION ${HARDINFO2_VERSION})
+#Put it together
+string(REPLACE " " "${PACKAGE_DELIMITER}" CPACK_PACKAGE_FILE_NAME "hardinfo2${PACKAGE_DELIMITER}${PACKAGE_DISTRO}${PACKAGE_ARCHITECTURE}")
+string(REPLACE " " "${PACKAGE_DELIMITER}" CPACK_SOURCE_PACKAGE_FILE_NAME "hardinfo2${PACKAGE_DELIMITER}${PACKAGE_DISTRO}${PACKAGE_ARCHITECTURE}")
+message("-- Found Package Version ${CPACK_PACKAGE_VERSION}")
+message("-- Found distro description ${distro}${disversion}")
+
+#flavour output
+set(HARDINFO2_OS ${distro})
+
+#fedora ->35
+if(${disversion} LESS 35.99)
+  if(${distro} MATCHES "Fedora*")
+    message("Fedora ->35 - LS24")
+    set(HARDINFO2_LIBSOUP3 0)
+  endif()
 endif()
 
-pkg_check_modules(LIBSOUP libsoup-2.4>=2.42)
-pkg_check_modules(JSON_GLIB REQUIRED json-glib-1.0)
+#centos/redhat/oracle/opensuse/suse ->9
+if(${disversion} LESS 9.99)
+  if(${distro} MATCHES "Red*" OR ${distro} MATCHES "CentOS*" OR ${distro} MATCHES "Oracle*" OR ${distro} MATCHES "openSUSE*" OR ${distro} MATCHES "Alma*" OR ${distro} MATCHES "Rocky*")
+    message("Centos/Redhat/oracle/opensuse/suse/rocky/alma ->9 - LS24")
+    set(HARDINFO2_LIBSOUP3 0)
+  endif()
+endif()
 
+#centos/redhat/oracle/opensuse/suse 6
+if(${disversion} LESS 6.99)
+  if((${distro} MATCHES "Red*" OR ${distro} MATCHES "CentOS*" OR ${distro} MATCHES "Oracle*" OR ${distro} MATCHES "openSUSE*" OR ${distro} MATCHES "SUSE*"))
+    message("RPM EL6 - GTK2 - deprecated - support will end at any time")
+    message("RPM EL6 - LS24 - deprecated version 2.34.3 - but ok")
+    set(HARDINFO2_GTK3 0)
+    set(PACKAGE_LIBSOUP2_MINVERSION 2.34.3)
+  endif()
+endif()
+
+#debian 7
+if(${distro}${disversion} MATCHES "DebianGNULinux7")
+    message("DEB 7 - GTK2 to avoid c11 for ubergraph - deprecated - support will end at any time")
+    message("DEB 7 - LS24 - deprecated version 2.34.3 - but ok")
+    set(HARDINFO2_GTK3 0)
+    set(PACKAGE_LIBSOUP2_MINVERSION 2.34.3)
+endif()
+
+#debian 8
+if(${distro}${disversion} MATCHES "DebianGNULinux8")
+    message("DEB 8 - GTK3 version 3.14.5 is low - Themes disabled")
+endif()
+
+#debian ->11
+if(${disversion} LESS 11.99)
+  if(${distro} MATCHES "DebianGNULinux")
+    message("DEB ->11 - LS24")
+    set(HARDINFO2_LIBSOUP3 0)
+  endif()
+  if(${distro} MATCHES "RaspbianGNULinux")
+    message("DEB ->11 - LS24")
+    set(HARDINFO2_LIBSOUP3 0)
+  endif()
+endif()
+#pureos ->10 (debian 11 or less)
+if(${disversion} LESS 10.99)
+  if(${distro} MATCHES "PureOS")
+    message("PureOS ->10 - LS24")
+    set(HARDINFO2_LIBSOUP3 0)
+  endif()
+endif()
+
+#ubuntu 20.04
+if(${disversion} LESS 20.99)
+  if(${distro} MATCHES "Ubuntu")
+    message("Ubuntu ->20.xx - LS24")
+    set(HARDINFO2_LIBSOUP3 0)
+  endif()
+endif()
+
+
+#Fedora 39 - bug with man pages - upgrade cmake to 3.28.x
+
+################################################################################
+
+if(${CMAKE_BUILD_TYPE} MATCHES [Dd]ebug)
+	set(HARDINFO2_DEBUG 1)
+        if(${distro}${disversion} MATCHES "DebianGNULinux7")
+        else()
+	   set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fsanitize=address")
+        endif()
+endif()
+add_subdirectory(po)
+
+
+include(FindPkgConfig)
+if (HARDINFO2_GTK3)
+    message(STATUS "Building for GTK3")
+    pkg_check_modules(GTK REQUIRED gtk+-3.0>=3.0 cairo>=1.0 cairo-png>=1.0 gthread-2.0>=2.10 gmodule-export-2.0>=2.10)
+    add_definitions(-DGTK_DISABLE_SINGLE_INCLUDES)
+else()
+    message(STATUS "Building for GTK2 - (Deprecated - Please update your distro!!)")
+    pkg_check_modules(GTK REQUIRED gtk+-2.0>=2.10 gthread-2.0>=2.10 gmodule-export-2.0>=2.10)
+endif()
+
+if (${HARDINFO2_LIBSOUP3})
+    pkg_check_modules(LIBSOUP REQUIRED libsoup-3.0>=3.00)
+else()
+    pkg_check_modules(LIBSOUP REQUIRED libsoup-2.4>=${PACKAGE_LIBSOUP2_MINVERSION})
+endif()
+pkg_check_modules(GLIB2 REQUIRED glib-2.0>=${PACKAGE_LIBGLIB2_MINVERSION})
+pkg_check_modules(JSON_GLIB REQUIRED json-glib-1.0>=0.14.2)
 pkg_check_modules(X11 REQUIRED x11)
 
 include(FindZLIB REQUIRED)
@@ -100,7 +216,7 @@ include(FindZLIB REQUIRED)
 include_directories(
 	${CMAKE_SOURCE_DIR}
 	${CMAKE_SOURCE_DIR}/includes
-	${CMAKE_SOURCE_DIR}/includes/${HARDINFO_ARCH}
+	${CMAKE_SOURCE_DIR}/includes/${HARDINFO2_ARCH}
 	${CMAKE_SOURCE_DIR}/deps/uber-graph
 	${CMAKE_SOURCE_DIR}/deps/sysobj_early/include
 	${CMAKE_SOURCE_DIR}/deps/sysobj_early/gui
@@ -118,28 +234,28 @@ link_directories(
 	${JSON_GLIB_LIBRARY_DIRS}
 )
 
-set(HARDINFO_MODULES
+set(HARDINFO2_MODULES
 	computer
 	devices
 	benchmark
 	network
 )
-set(HARDINFO_RESOURCES
+set(HARDINFO2_RESOURCES
 	"data/benchmark.data"
 	"data/benchmark.json"
+	"data/blobs-update-version.json"
 	"data/vendor.ids"
 	"data/sdcard.ids"
 	"data/usb.ids"
 	"data/arm.ids"
 	"data/edid.ids"
 	"data/ieee_oui.ids"
-	"data/pci.ids.min"
+	"data/pci.ids"
+	"data/kernel-module-icons.json"
 )
-
-set(HARDINFO_MANPAGES
-	"hardinfo.1"
+set(HARDINFO2_MANPAGES
+	"hardinfo2.1"
 )
-
 set(MODULE_computer_SOURCES
 	modules/computer.c
 	modules/computer/alsa.c
@@ -160,7 +276,7 @@ set(MODULE_computer_SOURCES
 )
 set(MODULE_devices_SOURCES
 	modules/devices.c
-	modules/devices/${HARDINFO_ARCH}/processor.c
+	modules/devices/${HARDINFO2_ARCH}/processor.c
 	modules/devices/gpu.c
 	modules/devices/monitors.c
 	modules/devices/battery.c
@@ -173,7 +289,6 @@ set(MODULE_devices_SOURCES
 	modules/devices/printers.c
 	modules/devices/resources.c
 	modules/devices/sensors.c
-#	modules/devices/spd-decode.c
 	modules/devices/storage.c
 	modules/devices/usb.c
 )
@@ -183,7 +298,7 @@ set(MODULE_network_SOURCES
 	modules/network/nfs.c
 	modules/network/samba.c
 )
-set(MODULE_benchmark_SOURCES_GTKANY
+set(MODULE_benchmark_SOURCES
 	modules/benchmark.c
 	modules/benchmark/bench_util.c
 	modules/benchmark/blowfish.c
@@ -199,16 +314,10 @@ set(MODULE_benchmark_SOURCES_GTKANY
 	modules/benchmark/sha1.c
 	modules/benchmark/zlib.c
 	modules/benchmark/sysbench.c
-)
-set(MODULE_benchmark_SOURCES_GTK2
+	modules/benchmark/iperf3.c
 	modules/benchmark/drawing.c
 	modules/benchmark/guibench.c
 )
-if (HARDINFO_GTK3)
-	set(MODULE_benchmark_SOURCES ${MODULE_benchmark_SOURCES_GTKANY})
-else()
-	set(MODULE_benchmark_SOURCES ${MODULE_benchmark_SOURCES_GTKANY} ${MODULE_benchmark_SOURCES_GTK2})
-endif()
 
 set_source_files_properties(
 	modules/benchmark/blowfish.c
@@ -216,22 +325,23 @@ set_source_files_properties(
 	modules/benchmark/md5.c
 	modules/benchmark/sha1.c
 	PROPERTIES
-	COMPILE_FLAGS "-O0"
+	COMPILE_FLAGS "-O0 -Wall -Wextra -Werror=implicit-function-declaration"
 )
 
 set_source_files_properties(
 	modules/devices/monitors.c
 	modules/devices/dmi_memory.c
 #	modules/devices/spd-decode.c
-	hardinfo/problem_marker.c
-	hardinfo/hinote_util.c
+	hardinfo2/problem_marker.c
+	hardinfo2/hinote_util.c
 	PROPERTIES
-	COMPILE_FLAGS "-std=c99 -Wall -Wextra -Wno-unused-function -Wno-deprecated-declarations -Wno-switch"
+	COMPILE_FLAGS "-std=c99 -Wall -Wextra -Wno-unused-function -Wno-switch -Werror=implicit-function-declaration"
 )
 
-foreach (_module ${HARDINFO_MODULES})
+foreach (_module ${HARDINFO2_MODULES})
 	add_library(${_module} MODULE ${MODULE_${_module}_SOURCES})
 	set_target_properties(${_module} PROPERTIES PREFIX "")
+	set_target_properties(${_module} PROPERTIES COMPILE_FLAGS "-Wall -Wextra -Wno-unused-parameter -Wno-unused-function -Wno-missing-braces -Wno-switch -Werror=implicit-function-declaration")
 	target_link_libraries(${_module} ${JSON_GLIB_LIBRARIES})
 endforeach()
 
@@ -254,10 +364,10 @@ add_library(sysobj_early STATIC
 	deps/sysobj_early/src/format_early.c
 	deps/sysobj_early/src/cpubits.c
 )
-set_target_properties(sysobj_early PROPERTIES COMPILE_FLAGS "-std=c99 -Wall -Wextra -Wno-parentheses -Wno-unused-function")
+set_target_properties(sysobj_early PROPERTIES COMPILE_FLAGS "-std=c99 -Wall -Wextra -Wno-parentheses -Wno-unused-function -Werror=implicit-function-declaration")
 target_link_libraries(sysobj_early m)
 
-if (HARDINFO_GTK3)
+if (HARDINFO2_GTK3)
 add_library(uber-graph STATIC
 	deps/uber-graph/g-ring.c
 	deps/uber-graph/uber-frame-source.c
@@ -271,42 +381,42 @@ add_library(uber-graph STATIC
 	deps/uber-graph/uber-timeout-interval.c
 	deps/uber-graph/uber-window.c
 )
-set_target_properties(uber-graph PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations")
+set_target_properties(uber-graph PROPERTIES COMPILE_FLAGS "-Wall -Wextra -Wno-deprecated-declarations -Wno-unused-parameter -Werror=implicit-function-declaration")
 endif()
 
 set_source_files_properties(
-	hardinfo/usb_util.c
-	hardinfo/pci_util.c
-	hardinfo/gpu_util.c
-	hardinfo/cpu_util.c
-	hardinfo/x_util.c
-	hardinfo/dt_util.c
+	hardinfo2/usb_util.c
+	hardinfo2/pci_util.c
+	hardinfo2/gpu_util.c
+	hardinfo2/cpu_util.c
+	hardinfo2/x_util.c
+	hardinfo2/dt_util.c
 	PROPERTIES
-	COMPILE_FLAGS "-Wall -Wextra -Wno-parentheses -Wno-unused-function"
+	COMPILE_FLAGS "-Wall -Wextra -Wno-parentheses -Wno-unused-function -Werror=implicit-function-declaration"
 )
 
-if (HARDINFO_GTK3)
-add_executable(hardinfo
-	hardinfo/usb_util.c
-	hardinfo/pci_util.c
-	hardinfo/binreloc.c
-	hardinfo/expr.c
-        hardinfo/hardinfo.c
-	hardinfo/socket.c
-	hardinfo/util.c
-	hardinfo/gg_key_file_parse_string_as_value.c
-	hardinfo/gg_strescape.c
-	hardinfo/problem_marker.c
-	hardinfo/hinote_util.c
-	hardinfo/vendor.c
-	hardinfo/info.c
-	hardinfo/cpu_util.c
-	hardinfo/dmi_util.c
-	hardinfo/dt_util.c
-	hardinfo/x_util.c
-	hardinfo/gpu_util.c
-	hardinfo/udisks2_util.c
-	hardinfo/storage_util.c
+if (HARDINFO2_GTK3)
+add_executable(hardinfo2
+	hardinfo2/usb_util.c
+	hardinfo2/pci_util.c
+	hardinfo2/binreloc.c
+	hardinfo2/expr.c
+	hardinfo2/hardinfo.c
+	hardinfo2/socket.c
+	hardinfo2/util.c
+	hardinfo2/gg_key_file_parse_string_as_value.c
+	hardinfo2/gg_strescape.c
+	hardinfo2/problem_marker.c
+	hardinfo2/hinote_util.c
+	hardinfo2/vendor.c
+	hardinfo2/info.c
+	hardinfo2/cpu_util.c
+	hardinfo2/dmi_util.c
+	hardinfo2/dt_util.c
+	hardinfo2/x_util.c
+	hardinfo2/gpu_util.c
+	hardinfo2/udisks2_util.c
+	hardinfo2/storage_util.c
 	shell/callbacks.c
 	shell/iconcache.c
 	shell/menu.c
@@ -316,7 +426,7 @@ add_executable(hardinfo
 	shell/syncmanager.c
 	shell/loadgraph-uber.c
 )
-target_link_libraries(hardinfo
+target_link_libraries(hardinfo2
 	-Wl,-whole-archive sysobj_early -Wl,-no-whole-archive
 	uber-graph
 	${GTK_LIBRARIES}
@@ -326,29 +436,29 @@ target_link_libraries(hardinfo
 	${X11_LIBRARIES}
 	${JSON_GLIB_LIBRARIES}
 )
-set_target_properties(hardinfo PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations")
+set_target_properties(hardinfo2 PROPERTIES COMPILE_FLAGS "-Wno-deprecated-declarations -Werror=implicit-function-declaration")
 else()
-add_executable(hardinfo
-	hardinfo/usb_util.c
-	hardinfo/pci_util.c
-	hardinfo/binreloc.c
-	hardinfo/expr.c
-        hardinfo/hardinfo.c
-	hardinfo/socket.c
-	hardinfo/util.c
-	hardinfo/gg_key_file_parse_string_as_value.c
-	hardinfo/gg_strescape.c
-	hardinfo/problem_marker.c
-	hardinfo/hinote_util.c
-	hardinfo/vendor.c
-	hardinfo/info.c
-	hardinfo/cpu_util.c
-	hardinfo/dmi_util.c
-	hardinfo/dt_util.c
-	hardinfo/x_util.c
-	hardinfo/gpu_util.c
-	hardinfo/udisks2_util.c
-	hardinfo/storage_util.c
+add_executable(hardinfo2
+	hardinfo2/usb_util.c
+	hardinfo2/pci_util.c
+	hardinfo2/binreloc.c
+	hardinfo2/expr.c
+	hardinfo2/hardinfo.c
+	hardinfo2/socket.c
+	hardinfo2/util.c
+	hardinfo2/gg_key_file_parse_string_as_value.c
+	hardinfo2/gg_strescape.c
+	hardinfo2/problem_marker.c
+	hardinfo2/hinote_util.c
+	hardinfo2/vendor.c
+	hardinfo2/info.c
+	hardinfo2/cpu_util.c
+	hardinfo2/dmi_util.c
+	hardinfo2/dt_util.c
+	hardinfo2/x_util.c
+	hardinfo2/gpu_util.c
+	hardinfo2/udisks2_util.c
+	hardinfo2/storage_util.c
 	shell/callbacks.c
 	shell/iconcache.c
 	shell/menu.c
@@ -358,7 +468,7 @@ add_executable(hardinfo
 	shell/syncmanager.c
 	shell/loadgraph.c
 )
-target_link_libraries(hardinfo
+target_link_libraries(hardinfo2
 	-Wl,-whole-archive sysobj_early -Wl,-no-whole-archive
 	${GTK_LIBRARIES}
 	${LIBSOUP_LIBRARIES}
@@ -370,36 +480,88 @@ target_link_libraries(hardinfo
 endif()
 
 configure_file(config.h.cmake ${CMAKE_BINARY_DIR}/config.h @ONLY)
-configure_file(hardinfo.desktop.cmake ${CMAKE_BINARY_DIR}/hardinfo.desktop @ONLY)
+configure_file(hardinfo2.desktop.cmake ${CMAKE_BINARY_DIR}/hardinfo2.desktop @ONLY)
 
-install(TARGETS hardinfo ${HARDINFO_MODULES}
+install(TARGETS hardinfo2 ${HARDINFO2_MODULES}
 	RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/hardinfo/modules
+	LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}/hardinfo2/modules
 	PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
 )
-install(FILES ${CMAKE_BINARY_DIR}/hardinfo.desktop
+install(FILES ${CMAKE_BINARY_DIR}/hardinfo2.desktop
 	DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/applications
 	PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
-install(FILES ${HARDINFO_RESOURCES}
-	DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hardinfo
+install(FILES ${HARDINFO2_RESOURCES}
+	DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hardinfo2
 	PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
 install(DIRECTORY pixmaps
-	DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hardinfo
-	PATTERN "*.{png,svg}"
+	DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hardinfo2
+	PATTERN "*.{png,svg,jpg}"
 	PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
-install(DIRECTORY doc
-	DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/hardinfo
-	PATTERN "*.{hlp,png}"
-	PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
-)
-install(FILES ${HARDINFO_MANPAGES}
+install(FILES ${HARDINFO2_MANPAGES}
 	DESTINATION ${CMAKE_INSTALL_MANDIR}/man1
 	PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
-install(FILES pixmaps/hardinfo.png
-    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/48x48/apps
+install(FILES pixmaps/hardinfo2.png
+    DESTINATION ${CMAKE_INSTALL_DATAROOTDIR}/icons/hicolor/256x256/apps
 	PERMISSIONS OWNER_READ OWNER_WRITE GROUP_READ WORLD_READ
 )
+
+########################CPack PACKAGE BUILDING###########################
+
+SET(CPACK_PACKAGE_HOMEPAGE_URL "https://www.hardinfo2.org")
+if(${RPM})
+    set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
+    SET(CPACK_SOURCE_IGNORE_FILES "/build/;/.git/;/.github/;.gitignore;.gitmodules;*.po.old;*~;*.mo;")
+    SET(CPACK_SOURCE_GENERATOR "RPM;TGZ")
+    SET(CPACK_GENERATOR "RPM")
+    SET(PACKAGE_GTK2 "libgtk-2-0")
+else()
+    SET(CPACK_SOURCE_IGNORE_FILES "/build/;/.git/;/.github/;.gitignore;.gitmodules;*.po.old;*~;*.mo")
+    SET(CPACK_SOURCE_GENERATOR "DEB;TGZ")
+    SET(CPACK_GENERATOR "DEB")
+    SET(PACKAGE_GTK2 "libgtk2.0-0")
+endif()
+
+#RPM
+SET(CPACK_RPM_PACKAGE_OBSOLETES "hardinfo")
+SET(CPACK_RPM_PACKAGE_MAINTAINER "hwspeedy <hardinfo2@bigbear.dk>")
+SET(CPACK_RPM_PACKAGE_DESCRIPTION "Hardinfo2 - System Information and Benchmark")
+SET(CPACK_RPM_PACKAGE_RECOMMENDS "sysbench, udisks2, mesa-utils, lsscsi, lm-sensors, xdg-utils, iperf3, fwupd")
+SET(CPACK_RPM_PACKAGE_LICENSE "GPL2+")
+SET(CPACK_RPM_PACKAGE_HOMEPAGE "https://github.com/hardinfo2/hardinfo2")
+SET(CPACK_RPM_PACKAGE_URL "https://www.hardinfo2.org")
+if(${HARDINFO2_LIBSOUP3})
+    SET(PACKAGE_LS "libsoup (>=3.0)")
+else()
+    SET(PACKAGE_LS "libsoup (>=${PACKAGE_LIBSOUP2_MINVERSION})")
+endif()
+if(HARDINFO2_GTK3)
+    SET(PACKAGE_GTK "libgtk-3-0 (>=3.0)")
+else()
+    SET(PACKAGE_GTK "${PACKAGE_GTK2} (>=2.20)")
+endif()
+SET(CPACK_RPM_PACKAGE_DEPENDS "libjson-glib-1.0-0, zlib, ${PACKAGE_LS}, ${PACKAGE_GTK}, libglib2.0-0 (>=2.10)")
+
+#DEB
+SET(CPACK_DEBIAN_PACKAGE_REPLACES "hardinfo")
+SET(CPACK_DEBIAN_PACKAGE_BREAKS "hardinfo")
+SET(CPACK_DEBIAN_PACKAGE_MAINTAINER "hwspeedy <hardinfo2@bigbear.dk>")
+SET(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Hardinfo2 - System Information and Benchmark")
+SET(CPACK_DEBIAN_PACKAGE_RECOMMENDS "sysbench, udisks2, mesa-utils, lsscsi, lm-sensors, xdg-utils, iperf3, fwupd")
+SET(CPACK_DEBIAN_PACKAGE_HOMEPAGE "https://github.com/hardinfo2/hardinfo2")
+if(${HARDINFO2_LIBSOUP3})
+    SET(PACKAGE_LS "libsoup-3.0-0 (>=3.0)")
+else()
+    SET(PACKAGE_LS "libsoup2.4-1 (>=${PACKAGE_LIBSOUP2_MINVERSION})")
+endif()
+if(HARDINFO2_GTK3)
+    SET(PACKAGE_GTK "libgtk-3-0 (>=3.0)")
+else()
+    SET(PACKAGE_GTK "${PACKAGE_GTK2} (>=2.20)")
+endif()
+SET(CPACK_DEBIAN_PACKAGE_DEPENDS "libjson-glib-1.0-0, zlib1g, ${PACKAGE_LS}, ${PACKAGE_GTK}")
+
+INCLUDE(CPack)

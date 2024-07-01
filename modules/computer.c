@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -170,8 +170,10 @@ gchar *hi_get_field(gchar * field)
 void scan_summary(gboolean reload)
 {
     SCAN_START();
+    //gdk_window_freeze_updates(GDK_WINDOW(gtk_widget_get_window(shell_get_main_shell()->info_tree->view)));
     module_entry_scan_all_except(entries, 0);
     computer->alsa = computer_get_alsainfo();
+    //gdk_window_thaw_updates(GDK_WINDOW(gtk_widget_get_window(shell_get_main_shell()->info_tree->view)));
     SCAN_END();
 }
 
@@ -254,7 +256,7 @@ void scan_dev(gboolean reload)
 {
     SCAN_START();
 
-    int i;
+    guint i;
     struct {
        gchar *compiler_name;
        gchar *version_command;
@@ -376,12 +378,12 @@ gchar *callback_memory_usage()
                "ViewType=2\n"
                "LoadGraphSuffix= kB\n"
                "RescanInterval=2000\n"
-               "ColumnTitle$TextValue=%s\n"
-               "ColumnTitle$Extra1=%s\n"
+	       "ColumnTitle$TextValue=%s\n"
+	       "ColumnTitle$Extra1=%s\n"
                "ColumnTitle$Value=%s\n"
                "ShowColumnHeaders=true\n"
                "%s\n", meminfo,
-               _("Field"), _("Description"), _("Value"), /* column labels */
+	       _("Field"), _("Description"), _("Value"), /* column labels */
                lginterval);
 }
 
@@ -455,6 +457,7 @@ static gchar *detect_machine_type(void)
 
 /* Table based off imvirt by Thomas Liske <liske@ibh.de>
    Copyright (c) 2008 IBH IT-Service GmbH under GPLv2. */
+char get_virtualization[100]={};
 gchar *computer_get_virtualization(void)
 {
     gboolean found = FALSE;
@@ -465,7 +468,7 @@ gchar *computer_get_virtualization(void)
         "/var/log/dmesg",
         NULL
     };
-    const static struct {
+    static const struct {
         gchar *str;
         gchar *vmtype;
     } vm_types[] = {
@@ -493,6 +496,8 @@ gchar *computer_get_virtualization(void)
         { NULL }
     };
     gchar *tmp;
+    //Caching for speedup
+    if(get_virtualization[0]!=0) return g_strdup(get_virtualization);
 
     DEBUG("Detecting virtual machine");
 
@@ -527,6 +532,7 @@ gchar *computer_get_virtualization(void)
               if (found) {
                   DEBUG("%s found (by reading file %s)",
                         vm_types[j].vmtype, files[i]);
+		  strcpy(get_virtualization,_(vm_types[j].vmtype));//Save
                   return g_strdup(_(vm_types[j].vmtype));
               }
          }
@@ -534,8 +540,10 @@ gchar *computer_get_virtualization(void)
     }
 
     DEBUG("no virtual machine detected; assuming physical machine");
-
-    return detect_machine_type();
+    char *c=detect_machine_type();
+    strcpy(get_virtualization,c);//Save
+    free(c);
+    return g_strdup(get_virtualization);
 }
 
 gchar *callback_summary(void)
@@ -576,6 +584,7 @@ gchar *callback_summary(void)
     return info_flatten(info);
 }
 
+
 gchar *callback_os(void)
 {
     struct Info *info = info_new();
@@ -596,7 +605,7 @@ gchar *callback_os(void)
     struct InfoGroup *version_group =
     info_add_group(
         info, _("Version"), info_field(_("Kernel"), computer->os->kernel),
-        info_field(_("Command Line"), computer->os->kcmdline ?: _("Unknown")),
+        info_field(_("Command Line"), idle_free(strwrap(computer->os->kcmdline,80,' ')) ?: _("Unknown")),
         info_field(_("Version"), computer->os->kernel_version),
         info_field(_("C Library"), computer->os->libc),
         info_field(_("Distribution"), distro,
@@ -614,7 +623,7 @@ gchar *callback_os(void)
     info_add_group(info, _("Current Session"),
         info_field(_("Computer Name"), computer->os->hostname),
         info_field(_("User Name"), computer->os->username),
-        info_field(_("Language"), computer->os->language),
+        info_field(_("Language"), idle_free(strwrap(computer->os->language,80,';'))),
         info_field(_("Home Directory"), computer->os->homedir),
         info_field(_("Desktop Environment"), computer->os->desktop),
         info_field_last());
@@ -628,18 +637,20 @@ gchar *callback_os(void)
 
 gchar *callback_security(void)
 {
+    gchar *st;
     struct Info *info = info_new();
 
     info_set_view_type(info, SHELL_VIEW_DETAIL);
 
-    info_add_group(info, _("HardInfo"),
-                   info_field(_("HardInfo running as"),
+    info_add_group(info, _("HardInfo2"),
+                   info_field(_("HardInfo2 running as"),
                               (getuid() == 0) ? _("Superuser") : _("User")),
                    info_field_last());
 
     info_add_group(
         info, _("Health"),
-        info_field_update(_("Available entropy in /dev/random"), 1000, .tag = g_strdup("entropy") ),
+        //info_field_update(_("Available entropy in /dev/random"), 1000, .tag = g_strdup("entropy") ),
+        info_field(_("Available entropy in /dev/random"), computer_get_entropy_avail() ),
         info_field_last());
 
     info_add_group(
@@ -668,13 +679,22 @@ gchar *callback_security(void)
                 continue;
 
             const gchar *icon = NULL;
+	    if (g_strstr_len(contents, -1, "Not affected") )
+	        icon = "circle_green_check.svg";
+
+            if (g_str_has_prefix(contents, "Mitigation:") ||
+                g_str_has_prefix(contents, "mitigation:"))
+                icon = "circle_yellow_exclaim.svg";
+
             if (g_strstr_len(contents, -1, "Vulnerable") ||
                 g_strstr_len(contents, -1, "vulnerable"))
-                icon = "dialog-warning.png";
+                icon = "circle_red_x.svg";
 
+	    st=strwrap(contents,90,',');
+	    g_free(contents);
             info_group_add_fields(vulns,
                                   info_field(g_strdup(vuln),
-                                             idle_free(contents), .icon = icon,
+                                             idle_free(st), .icon = icon,
                                              .free_name_on_flatten = TRUE),
                                   info_field_last());
         }
@@ -1074,6 +1094,7 @@ void hi_module_init(void)
 {
     computer = g_new0(Computer, 1);
     init_memory_labels();
+    kernel_module_icon_init();
 }
 
 const ModuleAbout *hi_module_get_about(void)
@@ -1082,8 +1103,7 @@ const ModuleAbout *hi_module_get_about(void)
         .author = "L. A. F. Pereira",
         .description = N_("Gathers high-level computer information"),
         .version = VERSION,
-        .license = "GNU GPL version 2",
-    };
+        .license = "GNU GPL version 2 or later.",};
 
     return &ma;
 }

@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -18,11 +18,13 @@
 
 #include <report.h>
 #include <stdio.h>
+#include <ctype.h>
 #include <string.h>
 #include <shell.h>
 #include <iconcache.h>
 #include <hardinfo.h>
 #include <config.h>
+#include "uri_handler.h"
 
 static ReportDialog *report_dialog_new(GtkTreeModel * model,
 				       GtkWidget * parent);
@@ -288,7 +290,7 @@ void report_details(ReportContext *ctx, gchar *key, gchar *value, gchar *details
 
 static void report_table_shell_dump(ReportContext *ctx, gchar *key_file_str, int level)
 {
-    gchar *text, *p, *next_nl, *eq, *indent;
+    gchar *text=NULL, *p, *next_nl, *eq, *indent;
     gchar *key, *value;
 
     indent = g_strnfill(level * 4, ' ');
@@ -784,7 +786,7 @@ static gchar *report_get_filename(void)
 #endif
 
     gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(dialog),
-				      "hardinfo_report");
+				      "hardinfo2_report");
 
     file_chooser_add_filters(dialog, file_types);
     file_chooser_open_expander(dialog);
@@ -1245,8 +1247,6 @@ static ReportDialog
     dialog1_action_area = GTK_DIALOG(dialog)->action_area;
 #endif
     gtk_widget_show(dialog1_action_area);
-    gtk_button_box_set_layout(GTK_BUTTON_BOX(dialog1_action_area),
-			      GTK_BUTTONBOX_END);
 
     button8 = gtk_button_new_with_mnemonic(_("_Cancel"));
     gtk_widget_show(button8);

@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -26,7 +26,6 @@ DisplayInfo *computer_get_display(void) {
     wl_info *wl = get_walyand_info();
     xinfo *xi = xinfo_get_info();
     xrr_info *xrr = xi->xrr;
-    glx_info *glx = xi->glx;
 
     di->width = di->height = 0;
     if (xrr->screen_count > 0) {

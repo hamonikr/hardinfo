@@ -6,7 +6,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -19,9 +19,11 @@
  */
 
 #include <stdlib.h>
+#include <ctype.h>
 #include <locale.h>
 #include <inttypes.h>
 #include <json-glib/json-glib.h>
+#include "nice_name.h"
 
 /* in dmi_memory.c */
 uint64_t memory_devices_get_system_memory_MiB();
@@ -50,6 +52,8 @@ typedef struct {
     char *ram_types;
     int machine_data_version;
     char *machine_type;
+    char *linux_kernel;       /*kernelarch*/
+    char *linux_os;           /*distroversion*/
 } bench_machine;
 
 typedef struct {
@@ -70,7 +74,7 @@ static char *cpu_config_retranslate(char *str, int force_en, int replacing)
     if (str != NULL) {
         new_str = strdup("");
         if (strchr(str, 'x')) {
-            while (c != NULL && sscanf(c, "%dx %f", &t, &f)) {
+	    while (c != NULL && (sscanf(c, "%dx %f", &t, &f)==2)) {
                 tmp = g_strdup_printf("%s%s%dx %.2f %s", new_str,
                                       strlen(new_str) ? " + " : "", t, f, mhz);
                 free(new_str);
@@ -102,7 +106,7 @@ static float cpu_config_val(char *str)
     float f, r = 0.0;
     if (str != NULL) {
         if (strchr(str, 'x')) {
-            while (c != NULL && sscanf(c, "%dx %f", &t, &f)) {
+	    while (c != NULL && (sscanf(c, "%dx %f", &t, &f)==2)) {
                 r += f * t;
                 c = strchr(c + 1, '+');
                 if (c)
@@ -184,6 +188,8 @@ bench_machine *bench_machine_this()
         m->memory_phys_MiB = memory_devices_get_system_memory_MiB();
         m->ram_types = memory_devices_get_system_memory_types_str();
         m->machine_type = module_call_method("computer::getMachineType");
+	m->linux_kernel = module_call_method("computer::getOSKernel");
+	m->linux_os = module_call_method("computer::getOS");
         free(tmp);
 
         cpu_procs_cores_threads_nodes(&m->processors, &m->cores, &m->threads, &m->nodes);
@@ -202,6 +208,8 @@ void bench_machine_free(bench_machine *s)
         free(s->mid);
         free(s->ram_types);
         free(s->machine_type);
+	free(s->linux_kernel);
+	free(s->linux_os);
         free(s);
     }
 }
@@ -347,14 +355,16 @@ static void append_cpu_config(JsonObject *object,
     if (output->len)
         g_string_append(output, ", ");
 
-    g_string_append_printf(output, "%ldx %.2f %s", json_node_get_int(member_node),
+    g_string_append_printf(output, "%ldx %.2f %s", (long int)json_node_get_int(member_node),
                            parse_frequency(member_name), _("MHz"));
 }
 
 static gchar *get_cpu_config(JsonObject *machine)
 {
-    JsonObject *cpu_config_map =
-        json_object_get_object_member(machine, "CpuConfigMap");
+    JsonObject *cpu_config_map=NULL;
+
+    if(json_object_has_member(machine, "CpuConfigMap"))
+        cpu_config_map=json_object_get_object_member(machine, "CpuConfigMap");
 
     if (!cpu_config_map)
         return json_get_string_dup(machine, "CpuConfig");
@@ -408,7 +418,6 @@ bench_result *bench_result_benchmarkjson(const gchar *bench_name,
 {
     JsonObject *machine;
     bench_result *b;
-    gchar *p;
 
     if (json_node_get_node_type(node) != JSON_NODE_OBJECT)
         return NULL;
@@ -423,16 +432,12 @@ bench_result *bench_result_benchmarkjson(const gchar *bench_name,
         .result = json_get_double(machine, "BenchmarkResult"),
         .elapsed_time = json_get_double(machine, "ElapsedTime"),
         .threads_used = json_get_int(machine, "UsedThreads"),
-        .revision = json_get_int(machine, "BenchmarkRevision"),
+        .revision = json_get_int(machine, "BenchmarkVersion"),//Revision
     };
 
     snprintf(b->bvalue.extra, sizeof(b->bvalue.extra), "%s",
              json_get_string(machine, "ExtraInfo"));
     filter_invalid_chars(b->bvalue.extra);
-
-    snprintf(b->bvalue.user_note, sizeof(b->bvalue.user_note), "%s",
-             json_get_string(machine, "UserNote"));
-    filter_invalid_chars(b->bvalue.user_note);
 
     int nodes = json_get_int(machine, "NumNodes");
 
@@ -491,7 +496,6 @@ static char *bench_result_more_info_less(bench_result *b)
         /* elapsed */ "%s=%0.4f %s\n"
         "%s=%s\n"
         "%s=%s\n"
-        "%s=%s\n"
         /* legacy */ "%s%s=%s\n"
         "[%s]\n"
         /* board */ "%s=%s\n"
@@ -508,8 +512,7 @@ static char *bench_result_more_info_less(bench_result *b)
         _("Elapsed Time"), b->bvalue.elapsed_time, _("seconds"),
         *bench_str ? _("Revision") : "#Revision", bench_str,
         *b->bvalue.extra ? _("Extra Information") : "#Extra", b->bvalue.extra,
-        *b->bvalue.user_note ? _("User Note") : "#User Note",
-        b->bvalue.user_note, b->legacy ? problem_marker() : "",
+        b->legacy ? problem_marker() : "",
         b->legacy ? _("Note") : "#Note",
         b->legacy ? _("This result is from an old version of HardInfo. Results "
                       "might not be comparable to current version. Some "
@@ -548,11 +551,12 @@ static char *bench_result_more_info_complete(bench_result *b)
         /* result */ "%s=%0.2f\n"
         /* elapsed */ "%s=%0.4f %s\n"
         "%s=%s\n"
-        "%s=%s\n"
         /* legacy */ "%s%s=%s\n"
         "[%s]\n"
         /* board */ "%s=%s\n"
         /* machine_type */ "%s=%s\n"
+        /* linux_kernel */ "%s=%s\n"
+        /* linux_os */ "%s=%s\n"
         /* cpu   */ "%s=%s\n"
         /* cpudesc */ "%s=%s\n"
         /* cpucfg */ "%s=%s\n"
@@ -571,8 +575,7 @@ static char *bench_result_more_info_complete(bench_result *b)
         b->bvalue.threads_used, _("Result"), b->bvalue.result,
         _("Elapsed Time"), b->bvalue.elapsed_time, _("seconds"),
         *b->bvalue.extra ? _("Extra Information") : "#Extra", b->bvalue.extra,
-        *b->bvalue.user_note ? _("User Note") : "#User Note",
-        b->bvalue.user_note, b->legacy ? problem_marker() : "",
+        b->legacy ? problem_marker() : "",
         b->legacy ? _("Note") : "#Note",
         b->legacy ? _("This result is from an old version of HardInfo. Results "
                       "might not be comparable to current version. Some "
@@ -581,6 +584,8 @@ static char *bench_result_more_info_complete(bench_result *b)
         _("Machine"), _("Board"),
         (b->machine->board != NULL) ? b->machine->board : _(unk),
         _("Machine Type"), (b->machine->machine_type != NULL) ? b->machine->machine_type : _(unk),
+        _("Linux Kernel"), (b->machine->linux_kernel != NULL) ? b->machine->linux_kernel : _(unk),
+        _("Linux OS"), (b->machine->linux_os != NULL) ? b->machine->linux_os : _(unk),
         _("CPU Name"),
         b->machine->cpu_name, _("CPU Description"),
         (b->machine->cpu_desc != NULL) ? b->machine->cpu_desc : _(unk),

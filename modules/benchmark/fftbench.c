@@ -59,17 +59,17 @@ static double random_double()
     return result;
 }
 
-static const int N = 800;
-static const int NM1 = 799;	// N - 1
-static const int NP1 = 801;	// N + 1
+static const int N = 100;
+static const int NM1 = 99;	// N - 1
+//static const int NP1 = 101;	// N + 1
 
 static void lup_decompose(FFTBench *fftbench)
 {
-    int i, j, k, k2, t;
+    int i, j, k, k2=0, t;
     double p, temp, **a;
 
     int *perm = (int *) malloc(sizeof(double) * N);
-    
+    free(fftbench->p);
     fftbench->p = perm;
     a = fftbench->a;
     
@@ -181,6 +181,7 @@ FFTBench *fft_bench_new(void)
     }
 
     fftbench->b = (double *) malloc(sizeof(double) * N);
+    fftbench->p = NULL;
 
     for (i = 0; i < N; ++i)
 	fftbench->b[i] = random_double();

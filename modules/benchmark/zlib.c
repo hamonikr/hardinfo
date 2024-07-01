@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -35,15 +35,14 @@
 static unsigned int zlib_errors = 0;
 
 static gpointer zlib_for(void *in_data, gint thread_number) {
-    char *compressed;
+    guchar *compressed;
     uLong bound = compressBound(BENCH_DATA_SIZE);
-    unsigned int i;
 
     compressed = malloc(bound);
     if (!compressed)
         return NULL;
 
-    char uncompressed[BENCH_DATA_SIZE];
+    guchar uncompressed[BENCH_DATA_SIZE];
     uLong compressedBound = bound;
     uLong destBound = sizeof(uncompressed);
 

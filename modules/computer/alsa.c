@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -51,8 +51,8 @@ computer_get_alsainfo(void)
         return NULL;
 
     ai = g_new0(AlsaInfo, 1);
-
-    while (fgets(buffer, 128, cards)) {
+    char *c=(char *)1;
+    while (c && (c=fgets(buffer, 128, cards))) {
         gchar **tmp;
 
         ac = g_new0(AlsaCard, 1);
@@ -63,7 +63,7 @@ computer_get_alsainfo(void)
         ai->cards = g_slist_append(ai->cards, ac);
 
         g_strfreev(tmp);
-        (void)fgets(buffer, 128, cards);  /* skip next line */
+        c=fgets(buffer, 128, cards);  /* skip next line */
     }
     fclose(cards);
 

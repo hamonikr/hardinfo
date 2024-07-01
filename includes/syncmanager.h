@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -30,11 +30,14 @@ struct _SyncEntry {
     gchar *(*generate_contents_for_upload)(gsize *size);
 
     gboolean selected;
+    gboolean optional;
 };
 
 void sync_manager_add_entry(SyncEntry *entry);
 void sync_manager_clear_entries(void);
 void sync_manager_show(GtkWidget *parent);
 gint sync_manager_count_entries(void);
+
+void sync_manager_update_on_startup(int send_benchmark);
 
 #endif /* __SYNCMANAGER_H__ */

@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -166,11 +166,11 @@ static gchar *__cache_get_info_as_string(Processor *processor)
 
 /* This is not used directly, but creates translatable strings for
  * the type string returned from /sys/.../cache */
-static const char* cache_types[] = {
-    NC_("cache-type", /*/cache type, as appears in: Level 1 (Data)*/ "Data"),
-    NC_("cache-type", /*/cache type, as appears in: Level 1 (Instruction)*/ "Instruction"),
-    NC_("cache-type", /*/cache type, as appears in: Level 2 (Unified)*/ "Unified")
-};
+//static const char* cache_types[] = {
+//    NC_("cache-type", /*/cache type, as appears in: Level 1 (Data)*/ "Data"),
+//    NC_("cache-type", /*/cache type, as appears in: Level 1 (Instruction)*/ "Instruction"),
+//    NC_("cache-type", /*/cache type, as appears in: Level 2 (Unified)*/ "Unified")
+//};
 
 static void __cache_obtain_info(Processor *processor)
 {
@@ -257,7 +257,6 @@ static gint cmp_cpufreq_data(cpufreq_data *a, cpufreq_data *b) {
 }
 
 static gint cmp_cpufreq_data_ignore_affected(cpufreq_data *a, cpufreq_data *b) {
-        gint i = 0;
         cmp_clocks_test(cpukhz_max);
         cmp_clocks_test(cpukhz_min);
         return 0;
@@ -267,10 +266,10 @@ gchar *clocks_summary(GSList * processors)
 {
     gchar *ret = g_strdup_printf("[%s]\n", _("Clocks"));
     GSList *all_clocks = NULL, *uniq_clocks = NULL;
-    GSList *tmp, *l;
+    GSList *l;
     Processor *p;
     cpufreq_data *c, *cur = NULL;
-    gint cur_count = 0, i = 0;
+    gint cur_count = 0;
 
     /* create list of all clock references */
     for (l = processors; l; l = l->next) {
@@ -369,7 +368,7 @@ gchar *caches_summary(GSList * processors)
     GSList *tmp, *l;
     Processor *p;
     ProcessorCache *c, *cur = NULL;
-    gint cur_count = 0, i = 0;
+    gint cur_count = 0;
 
     /* create list of all cache references */
     for (l = processors; l; l = l->next) {
@@ -588,7 +587,7 @@ gchar *processor_get_capabilities_from_flags(gchar *strflags, gchar *lookup_pref
     old = flags;
 
     while (flags[j]) {
-        if ( sscanf(flags[j], "[%d]", &i) ) {
+        if ( sscanf(flags[j], "[%d]", &i)==1 ) {
             /* Some flags are indexes, like [13], and that looks like
              * a new section to hardinfo shell */
             tmp = h_strdup_cprintf("(%s%d)=\n", tmp,
@@ -685,7 +684,7 @@ gchar *processor_describe(GSList * processors) {
 gchar *dmi_socket_info() {
     gchar *ret;
     dmi_type dt = 4;
-    int i;
+    guint i;
     dmi_handle_list *hl = dmidecode_handles(&dt);
 
     if (!hl) {

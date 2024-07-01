@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -538,7 +538,6 @@ static void read_sensors_sys_thermal(void) {
 
         if ((tz = g_dir_open(path_tz, 0, NULL))) {
             const gchar *entry;
-            gchar *temp = g_strdup("");
 
             while ((entry = g_dir_read_name(tz))) {
                 gchar *path = g_strdup_printf("%s/%s/temp", path_tz, entry);

@@ -7,7 +7,7 @@
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, version 2.
+ * the Free Software Foundation, version 2 or later.
  *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -41,10 +41,11 @@
 
 static GtkActionEntry entries[] = {
     {"InformationMenuAction", NULL, N_("_Information")},	/* name, stock id, label */
-    {"RemoteMenuAction", NULL, N_("_Remote")},
     {"ViewMenuAction", NULL, N_("_View")},
+#if GTK_CHECK_VERSION(3, 20, 0)
+    {"ThemeMenuAction", NULL, N_("_Theme")},
+#endif
     {"HelpMenuAction", NULL, N_("_Help")},
-    {"HelpMenuModulesAction", HI_STOCK_ABOUT_MODULES, N_("About _Modules")},
     {"MainMenuBarAction", NULL, ""},
 
     {"ReportAction", HI_STOCK_REPORT,	/* name, stock id */
@@ -62,18 +63,19 @@ static GtkActionEntry entries[] = {
      NULL,
      G_CALLBACK(cb_sync_manager)},
 
-    {"CopyAction", GTK_STOCK_COPY,
+    //does not work correctly and value low
+    /*{"CopyAction", HI_STOCK_CLIPBOARD,
      N_("_Copy to Clipboard"), "<control>C",
      N_("Copy to clipboard"),
-     G_CALLBACK(cb_copy_to_clipboard)},
+     G_CALLBACK(cb_copy_to_clipboard)},*/
 
-    {"RefreshAction", GTK_STOCK_REFRESH,
+    {"RefreshAction", HI_STOCK_REFRESH,
      N_("_Refresh"), "F5",
      NULL,
      G_CALLBACK(cb_refresh)},
 
     {"HomePageAction", HI_STOCK_INTERNET,
-     N_("_Open HardInfo Web Site"), NULL,
+     N_("_Open HardInfo2 Web Site"), NULL,
      NULL,
      G_CALLBACK(cb_open_web_page)},
 
@@ -83,7 +85,7 @@ static GtkActionEntry entries[] = {
      G_CALLBACK(cb_report_bug)},
 
     {"AboutAction", "_About",
-     N_("_About HardInfo"), NULL,
+     N_("_About HardInfo2"), NULL,
      N_("Displays program version information"),
      G_CALLBACK(cb_about)},
 
@@ -102,6 +104,40 @@ static GtkToggleActionEntry toggle_entries[] = {
      N_("_Toolbar"), NULL,
      NULL,
      G_CALLBACK(cb_toolbar)},
+    {"SyncOnStartupAction", NULL,
+     N_("Synchronize on startup"), NULL,
+     NULL,
+     G_CALLBACK(cb_sync_on_startup)},
+#if GTK_CHECK_VERSION(3, 0, 0)
+    {"DisableThemeAction", NULL,
+     N_("Disable Theme"), NULL,
+     NULL,
+     G_CALLBACK(cb_disable_theme)},
+    {"Theme1Action", NULL,
+     N_("Theme Motherboard"), NULL,
+     NULL,
+     G_CALLBACK(cb_theme1)},
+    {"Theme2Action", NULL,
+     N_("Theme Graffiti"), NULL,
+     NULL,
+     G_CALLBACK(cb_theme2)},
+    {"Theme3Action", NULL,
+     N_("Theme Anime PC"), NULL,
+     NULL,
+     G_CALLBACK(cb_theme3)},
+    {"Theme4Action", NULL,
+     N_("Theme Tux Star"), NULL,
+     NULL,
+     G_CALLBACK(cb_theme4)},
+    {"Theme5Action", NULL,
+     N_("Theme PixArt"), NULL,
+     NULL,
+     G_CALLBACK(cb_theme5)},
+    {"Theme6Action", NULL,
+     N_("Theme Silicon"), NULL,
+     NULL,
+     G_CALLBACK(cb_theme6)},
+#endif
 };
 
 /* Implement a handler for GtkUIManager's "add_widget" signal. The UI manager
@@ -124,7 +160,7 @@ void menu_init(Shell * shell)
 
     /* Create our objects */
     menu_box = shell->vbox;
-    action_group = gtk_action_group_new("HardInfo");
+    action_group = gtk_action_group_new("HardInfo2");
     menu_manager = gtk_ui_manager_new();
 
     shell->action_group = action_group;
@@ -134,7 +170,7 @@ void menu_init(Shell * shell)
      * menu_box -> window
      * actions -> action_group
      * action_group -> menu_manager */
-    gtk_action_group_set_translation_domain( action_group, "hardinfo" );//gettext
+    gtk_action_group_set_translation_domain( action_group, "hardinfo2" );//gettext
     gtk_action_group_add_actions(action_group, entries,
 				 G_N_ELEMENTS(entries), NULL);
     gtk_action_group_add_toggle_actions(action_group, toggle_entries,

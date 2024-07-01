@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -18,6 +18,7 @@
 
 #include <gdk/gdkx.h>
 #include <string.h>
+#include <ctype.h>
 #include <sys/utsname.h>
 #include "hardinfo.h"
 #include "computer.h"
@@ -157,14 +158,17 @@ detect_mate_version(void)
 static gchar *
 detect_window_manager(void)
 {
-    GdkScreen *screen = gdk_screen_get_default();
-    const gchar *windowman;
-    const gchar *curdesktop;
+  const gchar *curdesktop;
+  const gchar* windowman;
+  GdkScreen *screen = gdk_screen_get_default();
 
-    if (!screen || !GDK_IS_SCREEN(screen))
-        return NULL;
-
-    windowman = gdk_x11_screen_get_window_manager_name(screen);
+#if GTK_CHECK_VERSION(3,0,0)
+    if (GDK_IS_X11_SCREEN(screen)) {
+#else
+    if (screen && GDK_IS_SCREEN(screen)) {
+#endif
+      windowman = gdk_x11_screen_get_window_manager_name(screen);
+    } else return g_strdup("Not X11");
 
     if (g_str_equal(windowman, "Xfwm4"))
         return g_strdup("XFCE 4");
@@ -366,8 +370,10 @@ parse_os_release(void)
     for (line = split; *line; line++) {
         if (!strncmp(*line, "ID=", sizeof("ID=") - 1)) {
             id = g_strdup(*line + strlen("ID="));
-        } else if (!strncmp(*line, "CODENAME=", sizeof("CODENAME=") - 1)) {
+        } else if (!strncmp(*line, "CODENAME=", sizeof("CODENAME=") - 1) && codename == NULL) {
             codename = g_strdup(*line + strlen("CODENAME="));
+        } else if (!strncmp(*line, "VERSION_CODENAME=", sizeof("VERSION_CODENAME=") - 1) && codename == NULL) {
+            codename = g_strdup(*line + strlen("VERSION_CODENAME="));
         } else if (!strncmp(*line, "PRETTY_NAME=", sizeof("PRETTY_NAME=") - 1)) {
             pretty_name = g_strdup(*line +
                                    strlen("PRETTY_NAME=\""));
@@ -384,7 +390,7 @@ parse_os_release(void)
     return (Distro) {};
 }
 
-static Distro
+/*static Distro
 parse_lsb_release(void)
 {
     gchar *pretty_name = NULL;
@@ -392,7 +398,7 @@ parse_lsb_release(void)
     gchar *codename = NULL;
     gchar **split, *contents, **line;
 
-    if (!hardinfo_spawn_command_line_sync("/usr/bin/lsb_release -di", &contents, NULL, NULL, NULL))
+    if (!hardinfo_spawn_command_line_sync("/usr/bin/lsb_release -dic", &contents, NULL, NULL, NULL))
         return (Distro) {};
 
     split = g_strsplit(idle_free(contents), "\n", 0);
@@ -416,14 +422,14 @@ parse_lsb_release(void)
 
     g_free(id);
     return (Distro) {};
-}
+    }*/
 
 static Distro
 detect_distro(void)
 {
     static const struct {
         const gchar *file;
-        const gchar *codename;
+        const gchar *id;
         const gchar *override;
     } distro_db[] = {
 #define DB_PREFIX "/etc/"
@@ -457,6 +463,8 @@ detect_distro(void)
          * file too.
          */
         { DB_PREFIX "redhat-release", "rh" },
+        // Add for HamoniKR OS
+        { DB_PREFIX "hamonikr-release", "hamonikr", "HamonmiKR OS" },        
 #undef DB_PREFIX
         { NULL, NULL }
     };
@@ -468,9 +476,9 @@ detect_distro(void)
     if (distro.distro)
         return distro;
 
-    distro = parse_lsb_release();
+    /*distro = parse_lsb_release();
     if (distro.distro)
-        return distro;
+        return distro;*/
 
     for (i = 0; distro_db[i].file; i++) {
         if (!g_file_get_contents(distro_db[i].file, &contents, NULL, NULL))
@@ -479,30 +487,52 @@ detect_distro(void)
         if (distro_db[i].override) {
             g_free(contents);
             return (Distro) { .distro = g_strdup(distro_db[i].override),
-                              .codename = g_strdup(distro_db[i].codename) };
+                              .id = g_strdup(distro_db[i].id) };
         }
 
-        if (g_str_equal(distro_db[i].codename, "debian")) {
+        if (g_str_equal(distro_db[i].id, "debian")) {
             /* HACK: Some Debian systems doesn't include the distribuition
              * name in /etc/debian_release, so add them here. */
             if (isdigit(contents[0]) || contents[0] != 'D')
                 return (Distro) {
                     .distro = g_strdup_printf("Debian GNU/Linux %s", (char*)idle_free(contents)),
-                    .codename = g_strdup(distro_db[i].codename)
+                    .id = g_strdup(distro_db[i].id)
                 };
         }
 
-        if (g_str_equal(distro_db[i].codename, "fatdog")) {
+        if (g_str_equal(distro_db[i].id, "fatdog")) {
             return (Distro) {
                 .distro = g_strdup_printf("Fatdog64 [%.10s]", (char*)idle_free(contents)),
-                .codename = g_strdup(distro_db[i].codename)
+                .id = g_strdup(distro_db[i].id)
             };
         }
 
-        return (Distro) { .distro = contents, .codename = g_strdup(distro_db[i].codename) };
+        return (Distro) { .distro = contents, .id = g_strdup(distro_db[i].id) };
     }
 
     return (Distro) { .distro = g_strdup(_("Unknown")) };
+}
+
+static gchar *
+get_value_from_key_file(const gchar *file_content, const gchar *key)
+{
+    gchar **lines = g_strsplit(file_content, "\n", -1);
+    gchar **line;
+    for (line = lines; *line; line++) {
+        if (g_str_has_prefix(*line, key)) {
+            gchar *value = g_strstrip(g_strdup(*line + strlen(key) + 1));
+            if (value[0] == '"' && value[strlen(value) - 1] == '"') {
+                value[strlen(value) - 1] = '\0'; 
+                gchar *stripped_value = g_strdup(value + 1);
+                g_free(value);
+                value = stripped_value;
+            }
+            g_strfreev(lines);
+            return value;
+        }
+    }
+    g_strfreev(lines);
+    return NULL;
 }
 
 OperatingSystem *
@@ -510,26 +540,38 @@ computer_get_os(void)
 {
     struct utsname utsbuf;
     OperatingSystem *os;
-    int i;
 
     os = g_new0(OperatingSystem, 1);
 
-    Distro distro = detect_distro();
-    os->distro = g_strstrip(distro.distro);
-    os->distroid = distro.id;
-    os->distrocode = distro.codename;
+    // Check for HamoniKR OS
+    gchar *hamonikr_info;
+    if (g_file_get_contents("/etc/hamonikr/info", &hamonikr_info, NULL, NULL)) {
+        os->distro = get_value_from_key_file(hamonikr_info, "GRUB_TITLE");
+        if (!os->distro) {
+            os->distro = g_strdup("HamoniKR OS");
+        }
+        os->distroid = g_strdup("hamonikr");
+        os->distrocode = get_value_from_key_file(hamonikr_info, "CODENAME");
+        g_free(hamonikr_info);
+    } else {
+        // Detect other distributions
+        Distro distro = detect_distro();
+        os->distro = g_strstrip(distro.distro);
+        os->distroid = distro.id;
+        os->distrocode = distro.codename;
+    }
 
     /* Kernel and hostname info */
     uname(&utsbuf);
     os->kernel_version = g_strdup(utsbuf.version);
     os->kernel = g_strdup_printf("%s %s (%s)", utsbuf.sysname,
-				 utsbuf.release, utsbuf.machine);
+                                 utsbuf.release, utsbuf.machine);
     os->kcmdline = h_sysfs_read_string("/proc", "cmdline");
     os->hostname = g_strdup(utsbuf.nodename);
     os->language = computer_get_language();
     os->homedir = g_strdup(g_get_home_dir());
     os->username = g_strdup_printf("%s (%s)",
-				   g_get_user_name(), g_get_real_name());
+                                   g_get_user_name(), g_get_real_name());
     os->libc = get_libc_version();
     scan_languages(os);
 
@@ -539,7 +581,7 @@ computer_get_os(void)
 
     os->entropy_avail = computer_get_entropy_avail();
 
-    if (g_strcmp0(os->distrocode, "ubuntu") == 0) {
+    if (g_strcmp0(os->distroid, "ubuntu") == 0) {
         GSList *flavs = ubuntu_flavors_scan();
         if (flavs) {
             /* just use the first one */

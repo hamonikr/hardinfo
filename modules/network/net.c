@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -51,6 +51,8 @@ typedef struct _NetInfo NetInfo;
 struct _NetInfo {
     char name[16];
     int mtu;
+    char speed[30];
+    int carrier;
     unsigned char mac[8];
     char ip[16];
     char mask[16];
@@ -83,7 +85,7 @@ void get_wireless_info(int fd, NetInfo *netinfo)
   FILE *wrls;
   char wbuf[256];
   struct iwreq wi_req;
-  int r, trash;
+  int trash;
 
   netinfo->is_wireless = FALSE;
 
@@ -146,7 +148,7 @@ void get_wireless_info(int fd, NetInfo *netinfo)
   if (ioctl(fd, SIOCGIWMODE, &wi_req) < 0) {
     netinfo->wi_mode = 0;
   } else {
-    if (wi_req.u.mode >= 0 && wi_req.u.mode < 6) {
+    if (wi_req.u.mode < 6) {
       netinfo->wi_mode = wi_req.u.mode;
     } else {
       netinfo->wi_mode = 6;
@@ -171,28 +173,52 @@ void get_wireless_info(int fd, NetInfo *netinfo)
 void get_net_info(char *if_name, NetInfo * netinfo)
 {
     struct ifreq ifr;
-    int fd;
+    int fd,s;
+    gchar buf[256];
+    FILE *sysfs;
 
     fd = socket(PF_INET, SOCK_DGRAM, IPPROTO_IP);
 
     /* IPv4 */
     ifr.ifr_addr.sa_family = AF_INET;
-    strncpy(netinfo->name, if_name, sizeof(netinfo->name));
+    memcpy(netinfo->name, if_name, sizeof(netinfo->name));
 
     /* MTU */
     strcpy(ifr.ifr_name, if_name);
     if (ioctl(fd, SIOCGIFMTU, &ifr) < 0) {
-    netinfo->mtu = 0;
+        netinfo->mtu = 0;
     } else {
-    netinfo->mtu = ifr.ifr_mtu;
+        netinfo->mtu = ifr.ifr_mtu;
     }
+
+    /* Carrier */
+    netinfo->speed[0]=0;
+    sprintf(buf,"/sys/class/net/%s/carrier",if_name);
+    sysfs = fopen(buf, "r");
+    netinfo->carrier=0;
+    if (sysfs && (fgets(buf, sizeof(buf), sysfs)!=NULL)) sscanf(buf,"%d",&netinfo->carrier);
+    fclose(sysfs);
+
+    /* Speed */
+    netinfo->speed[0]=0;
+    sprintf(buf,"/sys/class/net/%s/speed",if_name);
+    sysfs = fopen(buf, "r");
+    s=0;
+    if (sysfs && (fgets(buf, sizeof(buf), sysfs)!=NULL)) sscanf(buf,"%d",&s);
+    if(netinfo->carrier!=1)
+      sprintf(netinfo->speed,"Not Connected");
+        else if(s<=0)
+          sprintf(netinfo->speed,"Not Specified"); else
+            if(s<1000) sprintf(netinfo->speed,"%d Mbit",s); else
+	       sprintf(netinfo->speed,"%g Gbit",(float)s/1000);
+    fclose(sysfs);
 
     /* HW Address */
     strcpy(ifr.ifr_name, if_name);
     if (ioctl(fd, SIOCGIFHWADDR, &ifr) < 0) {
-    memset(netinfo->mac, 0, 8);
+        memset(netinfo->mac, 0, 8);
     } else {
-    memcpy(netinfo->mac, ifr.ifr_ifru.ifru_hwaddr.sa_data, 8);
+        memcpy(netinfo->mac, ifr.ifr_ifru.ifru_hwaddr.sa_data, 8);
     }
 
     /* IP Address */
@@ -200,9 +226,9 @@ void get_net_info(char *if_name, NetInfo * netinfo)
     if (ioctl(fd, SIOCGIFADDR, &ifr) < 0) {
     netinfo->ip[0] = 0;
     } else {
-    snprintf(netinfo->ip, sizeof(netinfo->ip), "%s",
-        inet_ntoa(((struct sockaddr_in *) &ifr.ifr_addr)->
-              sin_addr));
+        char ipstr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &((struct sockaddr_in *) &ifr.ifr_addr)->sin_addr, ipstr, INET_ADDRSTRLEN);
+        snprintf(netinfo->ip, sizeof(netinfo->ip), "%s",ipstr);
     }
 
     /* Mask Address */
@@ -210,9 +236,9 @@ void get_net_info(char *if_name, NetInfo * netinfo)
     if (ioctl(fd, SIOCGIFNETMASK, &ifr) < 0) {
     netinfo->mask[0] = 0;
     } else {
-    snprintf(netinfo->mask, sizeof(netinfo->mask), "%s",
-        inet_ntoa(((struct sockaddr_in *) &ifr.ifr_addr)->
-              sin_addr));
+        char ipstr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &((struct sockaddr_in *) &ifr.ifr_addr)->sin_addr, ipstr, INET_ADDRSTRLEN);
+        snprintf(netinfo->mask, sizeof(netinfo->mask), "%s",ipstr);
     }
 
     /* Broadcast Address */
@@ -220,9 +246,9 @@ void get_net_info(char *if_name, NetInfo * netinfo)
     if (ioctl(fd, SIOCGIFBRDADDR, &ifr) < 0) {
     netinfo->broadcast[0] = 0;
     } else {
-    snprintf(netinfo->broadcast, sizeof(netinfo->broadcast), "%s",
-        inet_ntoa(((struct sockaddr_in *) &ifr.ifr_addr)->
-              sin_addr));
+        char ipstr[INET_ADDRSTRLEN];
+        inet_ntop(AF_INET, &((struct sockaddr_in *) &ifr.ifr_addr)->sin_addr, ipstr, INET_ADDRSTRLEN);
+        snprintf(netinfo->broadcast, sizeof(netinfo->broadcast), "%s",ipstr);
     }
 
 #ifdef HAS_LINUX_WE
@@ -403,6 +429,7 @@ static void scan_net_interfaces_24(void)
                        "%s=%s\n" /* Interface Type */
                        "%s=%02x:%02x:%02x:%02x:%02x:%02x\n" /* MAC */
                        "%s=%d\n" /* MTU */
+                       "%s=%s\n" /* Speed */
                        "[%s]\n" /*Transfer Details*/
                        "%s=%.0lf (%.2f%s)\n" /* Bytes Received */
                        "%s=%.0lf (%.2f%s)\n" /* Bytes Sent */,
@@ -413,6 +440,7 @@ static void scan_net_interfaces_24(void)
                        ni.mac[2], ni.mac[3],
                        ni.mac[4], ni.mac[5],
                        _("MTU"), ni.mtu,
+                       _("Speed"), ni.speed,
                        _("Transfer Details"),
                        _("Bytes Received"), recv_bytes, recv_mb, _("MiB"),
                        _("Bytes Sent"), trans_bytes, trans_mb, _("MiB"));

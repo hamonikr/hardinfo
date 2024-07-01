@@ -1,0 +1,21 @@
+[Desktop Entry]
+Name=System Profiler and Benchmark
+Name[ko]=하드웨어 정보
+Name[de]=System Profiler und Benchmark
+Name[es]=Informacion y Rendimiento del Sistema
+Name[fr]=Informations et Benchmarks du Système
+Name[pt_BR]=Informações e Testes do Sistema
+Name[ru]=Информация о системе и тестирование
+Name[tr]=Sistem Bilgisi ve Karşılaştırma
+Comment=Displays system information
+Comment[ko]=시스템 및 하드웨어 정보 보기 및 벤치마크
+Comment[de]=Anzeigen von Systeminformationen
+Comment[ru]=Показывает информацию о системе
+Exec=hardinfo2
+Icon=hardinfo2
+Terminal=false
+Type=Application
+StartupNotify=true
+Categories=System;Utility;
+Keywords=linux;kernel;system;hardware;cpu;processor;capabilities;frequency;memory;ram;board;resources;sensors;devices;usb;pci;display;network;benchmark;test;
+Keywords[zh_CN]=linux;内核;系统;硬件;cpu;处理器;capabilities;频率;内存;ram;主板;资源;传感器;设备;usb;pci;显示;网络;性能测试;测试;

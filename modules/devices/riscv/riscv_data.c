@@ -47,6 +47,9 @@ static struct {
     { "Q",     NC_("rv-ext", /*/ext:Q*/ "Floating-point instructions, quad-precision") },
     { "B",     NC_("rv-ext", /*/ext:B*/ "Bit manipulation instructions") },
     { "V",     NC_("rv-ext", /*/ext:V*/ "Vector operations") },
+    { "Zk",    NC_("rv-ext", /*/ext:Zk*/ "Scalar Cryptography") },
+    { "S",     NC_("rv-ext", /*/ext:S*/ "Supervisor-level Instructions") },
+    { "U",     NC_("rv-ext", /*/ext:U*/ "User Mode") },
     { "T",     NC_("rv-ext", /*/ext:T*/ "Transactional memory") },
     { "P",     NC_("rv-ext", /*/ext:P*/ "Packed SIMD instructions") },
     { "L",     NC_("rv-ext", /*/ext:L*/ "Decimal floating-point instructions") },
@@ -139,10 +142,10 @@ static int riscv_isa_next(const char *isap, char *flag) {
     }
 
     switch(*p) {
-        case 'S': case 's': /* supervisor extension */
-        case 'X': case 'x': /* custom extension */
+      //        case 'S': case 's': /* supervisor extension */
+      //        case 'X': case 'x': /* custom extension */
             /* custom supervisor extension (SX..) handled by S */
-            break;
+      //       break;
         default: /* single character (standard) extension */
             tag_len = 1;
             if (next_digit != p+1) ver_len = 0;
@@ -171,7 +174,7 @@ static int riscv_isa_next(const char *isap, char *flag) {
 
 #define FSTR_SIZE 1024
 #define RV_CHECK_FOR(e) ( strncasecmp(ps, e, 2) == 0 )
-#define ADD_EXT_FLAG(ext) el = strlen(ext); strncpy(pd, ext, el); strncpy(pd + el, " ", 1); pd += el + 1;
+#define ADD_EXT_FLAG(ext) el = strlen(ext); strncpy(pd, ext, el); pd[el]=' '; pd[el+1]=0; pd += el + 1;
 char *riscv_isa_to_flags(const char *isa) {
     char *flags = NULL, *ps = (char*)isa, *pd = NULL;
     char flag_buf[64] = "";

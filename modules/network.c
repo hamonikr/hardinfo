@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -151,7 +151,7 @@ void scan_dns(gboolean reload)
           ip = g_strstrip(buffer + sizeof("nameserver"));
 
           sa.sin_family = AF_INET;
-          sa.sin_addr.s_addr = inet_addr(ip);
+	  inet_pton(AF_INET,ip,&sa.sin_addr.s_addr);
 
           if (getnameinfo((struct sockaddr *)&sa, sizeof(sa), hbuf, sizeof(hbuf), NULL, 0, NI_NAMEREQD)) {
               __nameservers = h_strdup_cprintf("%s=\n",
@@ -196,10 +196,11 @@ void scan_route(gboolean reload)
 
       if ((route = popen(command_line, "r"))) {
         /* eat first two lines */
-        (void)fgets(buffer, 256, route);
-        (void)fgets(buffer, 256, route);
+        char *c=fgets(buffer, 256, route);
+	char *cc=NULL;
+	if(c) {cc=fgets(buffer, 256, route);}
 
-        while (fgets(buffer, 256, route)) {
+        if(cc) while (fgets(buffer, 256, route)) {
           buffer[15] = '\0';
           buffer[31] = '\0';
           buffer[47] = '\0';
@@ -236,9 +237,9 @@ void scan_arp(gboolean reload)
 
     if ((arp = fopen("/proc/net/arp", "r"))) {
       /* eat first line */
-      (void)fgets(buffer, 256, arp);
+      char *c=fgets(buffer, 256, arp);
 
-      while (fgets(buffer, 256, arp)) {
+      if(c) while (fgets(buffer, 256, arp)) {
         buffer[15] = '\0';
         buffer[58] = '\0';
 
@@ -440,7 +441,7 @@ const ModuleAbout *hi_module_get_about(void)
         .description =
             N_("Gathers information about this computer's network connection"),
         .version = VERSION,
-        .license = "GNU GPL version 2",
+        .license = "GNU GPL version 2 or later.",
     };
 
     return &ma;

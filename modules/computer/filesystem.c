@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -17,7 +17,9 @@
  *
  * Some code from xfce4-mount-plugin, version 0.4.3
  *  Copyright (C) 2005 Jean-Baptiste jb_dul@yahoo.com
- *  Distributed under the terms of GNU GPL 2.
+ *  Distributed under the terms of GNU GPL 2+ - 
+ * https://gitlab.xfce.org/panel-plugins/xfce4-mount-plugin/-/blob/master/panel-plugin/mount-plugin.c
+.*
  */
 
 #include <string.h>

@@ -31,16 +31,54 @@
 
 #include "util_edid_svd_table.c"
 
-// TODO: find a better fix, I've seen a few EDID strings with bogus chars
-#if !GLIB_CHECK_VERSION(2,52,0)
-__attribute__ ((weak))
-gchar *g_utf8_make_valid(const gchar *s, const gssize l) {
-    if (l < 0)
-        return g_strdup(s);
-    else
-        return g_strndup(s, (gsize)l);
+#if GLIB_CHECK_VERSION(2,52,0)
+#else
+gchar *
+g2_utf8_make_valid (const gchar *str,
+                   gssize       len)
+{
+  GString *string;
+  const gchar *remainder, *invalid;
+  gsize remaining_bytes, valid_bytes;
+
+  g_return_val_if_fail (str != NULL, NULL);
+
+  if (len < 0)
+    len = strlen (str);
+
+  string = NULL;
+  remainder = str;
+  remaining_bytes = len;
+
+  while (remaining_bytes != 0)
+    {
+      if (g_utf8_validate (remainder, remaining_bytes, &invalid))
+	break;
+      valid_bytes = invalid - remainder;
+
+      if (string == NULL)
+	string = g_string_sized_new (remaining_bytes);
+
+      g_string_append_len (string, remainder, valid_bytes);
+      /* append U+FFFD REPLACEMENT CHARACTER */
+      g_string_append (string, "\357\277\275");
+
+      remaining_bytes -= valid_bytes + 1;
+      remainder = invalid + 1;
+    }
+
+  if (string == NULL)
+    return g_strndup (str, len);
+
+  g_string_append_len (string, remainder, remaining_bytes);
+  g_string_append_c (string, '\0');
+
+  g_assert (g_utf8_validate (string->str, -1, NULL));
+
+  return g_string_free (string, FALSE);
 }
 #endif
+
 
 #define NOMASK (~0U)
 #define BFMASK(LSB, MASK) (MASK << LSB)
@@ -89,7 +127,11 @@ char *rstr(edid *e, uint32_t offset, uint32_t len) {
     char *raw = malloc(len+1), *ret = NULL;
     strncpy(raw, (char*)&e->u8[offset], len);
     raw[len] = 0;
+#if GLIB_CHECK_VERSION(2,52,0)
     ret = g_utf8_make_valid(raw, len);
+#else
+    ret = g2_utf8_make_valid(raw, len);
+#endif
     g_free(raw);
     return ret;
 }
@@ -100,7 +142,11 @@ char *rstr_strip(edid *e, uint32_t offset, uint32_t len) {
     char *raw = malloc(len+1), *ret = NULL;
     strncpy(raw, (char*)&e->u8[offset], len);
     raw[len] = 0;
+#if GLIB_CHECK_VERSION(2,52,0)
     ret = g_strstrip(g_utf8_make_valid(raw, len));
+#else
+    ret = g_strstrip(g2_utf8_make_valid(raw, len));
+#endif
     g_free(raw);
     return ret;
 }
@@ -323,8 +369,10 @@ static void did_block_decode(DisplayIDBlock *blk) {
     uint32_t a = blk->addy.offset; /* start of block, includes header */
     uint8_t *u8 = DPTR(blk->addy);
     int b = h;
-    edid_ven ven = {};
-    edid_output out = {};
+    edid_ven ven;// = {};
+    edid_output out;// = {};
+    memset(&ven,0,sizeof(edid_ven));
+    memset(&out,0,sizeof(edid_output));
     if (blk) {
         switch(blk->type) {
             case 0:     /* Product ID (1.x) */
@@ -443,7 +491,8 @@ static edid_output edid_output_from_svd(uint8_t index) {
     if (index >= 128 && index <= 192) index &= 0x7f; /* "native" flag for 0-64 */
     for(i = 0; i < (int)G_N_ELEMENTS(cea_standard_timings); i++) {
         if (cea_standard_timings[i].index == index) {
-            edid_output out = {};
+            edid_output out;// = {};
+            memset(&out,0,sizeof(edid_output));
             out.horiz_pixels = cea_standard_timings[i].horiz_active;
             out.vert_lines = cea_standard_timings[i].vert_active;
             if (strchr(cea_standard_timings[i].short_name, 'i'))
@@ -1153,7 +1202,7 @@ char *edid_cea_audio_describe(struct edid_sad *sad) {
             sad->format, _(edid_cea_audio_type(sad->format)) );
 
     gchar *ret = NULL;
-    gchar *tmp[3] = {};
+    gchar *tmp[3] = {NULL,NULL,NULL};
 #define appfreq(b, f) if (sad->freq_bits & (1 << b)) tmp[0] = appf(tmp[0], ", ", "%d", f);
 #define appdepth(b, d) if (sad->depth_bits & (1 << b)) tmp[1] = appf(tmp[1], ", ", "%d%s", d, _("-bit"));
     appfreq(0, 32);

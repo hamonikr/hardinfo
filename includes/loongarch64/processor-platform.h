@@ -3,8 +3,7 @@
  *    Copyright (C) 2003-2006 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
- *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    it under the terms of the GNU General Public License v2.0 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -20,9 +19,12 @@
 #define __PROCESSOR_PLATFORM_H__
 
 struct _Processor {
-    gchar *model_name;
     gchar *vendor_id;
-    gfloat bogomips, cpu_mhz;
+    gchar *family;
+    gchar *model_name;
+    gint   revision;
+    gfloat cpu_mhz, bogomips;
+    gchar *features;
 };
 
 #endif	/* __PROCESSOR_PLATFORM_H__ */

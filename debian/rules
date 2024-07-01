@@ -3,3 +3,7 @@
 
 %:
 	dh ${@}
+
+override_dh_install:
+	dh_install
+	dh_link /usr/bin/hardinfo2 /usr/bin/hardinfo

@@ -1,10 +1,10 @@
 /*
- *    HardInfo - Displays System Information
+ *    HardInfo - System Information and Benchmark
  *    Copyright (C) 2003-2017 L. A. F. Pereira <l@tia.mat.br>
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -20,51 +20,60 @@
 
 #define BENCH_CALLBACK(CN, BN, BID, R) \
 gchar *CN() { \
-    if (R)    \
+    DEBUG("BENCH CALLBACK %s\n",BN); \
+    params.aborting_benchmarks=0; \
+    if (R) \
         return benchmark_include_results_reverse(bench_results[BID], BN); \
-    else      \
-        return benchmark_include_results(bench_results[BID], BN); \
+    else \
+    return benchmark_include_results(bench_results[BID], BN); \
 }
 
-#define BENCH_SCAN_SIMPLE(SN, BF, BID) \
+#define BENCH_SCAN_SIMPLE(SN, BF, BID, BN)  \
 void SN(gboolean reload) { \
-    SCAN_START(); \
-    do_benchmark(BF, BID); \
-    SCAN_END(); \
+    static gboolean scanned=FALSE; \
+    if(params.aborting_benchmarks) return; \
+    if (reload || bench_results[BID].result<=0.0) scanned = FALSE; \
+    if(reload){DEBUG("BENCH SCAN RELOAD %s\n",BN);} else if(scanned) {DEBUG("BENCH SCAN OK %s\n",BN);}else{DEBUG("BENCH SCAN %s\n",BN);} \
+    if (scanned) return; \
+    do_benchmark(BF, BID);			\
+    scanned = TRUE; \
 }
 
 #define BENCH_SIMPLE(BID, BN, BF, R) \
     BENCH_CALLBACK(callback_##BF, BN, BID, R); \
-    BENCH_SCAN_SIMPLE(scan_##BF, BF, BID);
+    BENCH_SCAN_SIMPLE(scan_##BF, BF, BID, BN);
 
 // ID, NAME, FUNCTION, R (0 = lower is better, 1 = higher is better)
-BENCH_SIMPLE(BENCHMARK_FIB, "CPU Fibonacci", benchmark_fib, 0);
-BENCH_SIMPLE(BENCHMARK_NQUEENS, "CPU N-Queens", benchmark_nqueens, 0);
-BENCH_SIMPLE(BENCHMARK_FFT, "FPU FFT", benchmark_fft, 0);
-BENCH_SIMPLE(BENCHMARK_RAYTRACE, "FPU Raytracing", benchmark_raytrace, 0);
+BENCH_SIMPLE(BENCHMARK_FIB, "CPU Fibonacci", benchmark_fib, 1);
+BENCH_SIMPLE(BENCHMARK_NQUEENS, "CPU N-Queens", benchmark_nqueens, 1);
+BENCH_SIMPLE(BENCHMARK_FFT, "FPU FFT", benchmark_fft, 1);
+BENCH_SIMPLE(BENCHMARK_RAYTRACE, "FPU Raytracing (Single-thread)", benchmark_raytrace, 1);
 BENCH_SIMPLE(BENCHMARK_BLOWFISH_SINGLE, "CPU Blowfish (Single-thread)", benchmark_bfish_single, 1);
 BENCH_SIMPLE(BENCHMARK_BLOWFISH_THREADS, "CPU Blowfish (Multi-thread)", benchmark_bfish_threads, 1);
 BENCH_SIMPLE(BENCHMARK_BLOWFISH_CORES, "CPU Blowfish (Multi-core)", benchmark_bfish_cores, 1);
 BENCH_SIMPLE(BENCHMARK_ZLIB, "CPU Zlib", benchmark_zlib, 1);
 BENCH_SIMPLE(BENCHMARK_CRYPTOHASH, "CPU CryptoHash", benchmark_cryptohash, 1);
+BENCH_SIMPLE(BENCHMARK_IPERF3_SINGLE, "Internal Network Speed", benchmark_iperf3_single, 1);
 BENCH_SIMPLE(BENCHMARK_SBCPU_SINGLE, "SysBench CPU (Single-thread)", benchmark_sbcpu_single, 1);
 BENCH_SIMPLE(BENCHMARK_SBCPU_ALL, "SysBench CPU (Multi-thread)", benchmark_sbcpu_all, 1);
 BENCH_SIMPLE(BENCHMARK_SBCPU_QUAD, "SysBench CPU (Four threads)", benchmark_sbcpu_quad, 1);
 BENCH_SIMPLE(BENCHMARK_MEMORY_SINGLE, "SysBench Memory (Single-thread)", benchmark_memory_single, 1);
 BENCH_SIMPLE(BENCHMARK_MEMORY_DUAL, "SysBench Memory (Two threads)", benchmark_memory_dual, 1);
-BENCH_SIMPLE(BENCHMARK_MEMORY_QUAD, "SysBench Memory", benchmark_memory_quad, 1);
+BENCH_SIMPLE(BENCHMARK_MEMORY_QUAD, "SysBench Memory (Quad threads)", benchmark_memory_quad, 1);
+BENCH_SIMPLE(BENCHMARK_MEMORY_ALL, "SysBench Memory (Multi-thread)", benchmark_memory_all, 1);
 
-#if !GTK_CHECK_VERSION(3,0,0)
-BENCH_CALLBACK(callback_gui, "GPU Drawing", BENCHMARK_GUI, 1);
-void scan_gui(gboolean reload)
+BENCH_CALLBACK(callback_benchmark_gui, "GPU Drawing", BENCHMARK_GUI, 1);
+void scan_benchmark_gui(gboolean reload)
 {
-    SCAN_START();
+    static gboolean scanned=FALSE;
+    if(params.aborting_benchmarks) return;
+    if (reload || bench_results[BENCHMARK_GUI].result<=0.0) scanned = FALSE;
+    if (scanned) return;
 
     bench_value er = EMPTY_BENCH_VALUE;
 
     if (params.run_benchmark) {
         int argc = 0;
-
         ui_init(&argc, NULL);
     }
 
@@ -73,9 +82,30 @@ void scan_gui(gboolean reload)
     } else {
         bench_results[BENCHMARK_GUI] = er;
     }
-    SCAN_END();
+    scanned = TRUE;
 }
-#endif
+
+//Note: Same order as entries, used for json to server
+static char *entries_english_name[] = {
+            "CPU Blowfish (Single-thread)",
+            "CPU Blowfish (Multi-thread)",
+            "CPU Blowfish (Multi-core)",
+            "CPU Zlib",
+            "CPU CryptoHash",
+            "CPU Fibonacci",
+            "CPU N-Queens",
+            "FPU FFT",
+            "FPU Raytracing (Single-thread)",
+            "Internal Network Speed",
+            "SysBench CPU (Single-thread)",
+            "SysBench CPU (Multi-thread)",
+            "SysBench CPU (Four threads)",
+            "SysBench Memory (Single-thread)",
+            "SysBench Memory (Two threads)",
+            "SysBench Memory (Quad threads)",
+            "SysBench Memory (Multi-thread)",
+            "GPU Drawing"};
+
 
 static ModuleEntry entries[] = {
     [BENCHMARK_BLOWFISH_SINGLE] =
@@ -144,10 +174,18 @@ static ModuleEntry entries[] = {
         },
     [BENCHMARK_RAYTRACE] =
         {
-            N_("FPU Raytracing"),
+            N_("FPU Raytracing (Single-thread)"),
             "raytrace.png",
             callback_benchmark_raytrace,
             scan_benchmark_raytrace,
+            MODULE_FLAG_NONE,
+        },
+    [BENCHMARK_IPERF3_SINGLE] =
+        {
+            N_("Internal Network Speed"),
+            "network.png",
+            callback_benchmark_iperf3_single,
+            scan_benchmark_iperf3_single,
             MODULE_FLAG_NONE,
         },
     [BENCHMARK_SBCPU_SINGLE] =
@@ -192,24 +230,28 @@ static ModuleEntry entries[] = {
         },
     [BENCHMARK_MEMORY_QUAD] =
         {
-            N_("SysBench Memory"),
+            N_("SysBench Memory (Quad threads)"),
             "memory.png",
             callback_benchmark_memory_quad,
             scan_benchmark_memory_quad,
+            MODULE_FLAG_HIDE,
+        },
+    [BENCHMARK_MEMORY_ALL] =
+        {
+            N_("SysBench Memory (Multi-thread)"),
+            "memory.png",
+            callback_benchmark_memory_all,
+            scan_benchmark_memory_all,
             MODULE_FLAG_NONE,
         },
-#if !GTK_CHECK_VERSION(3, 0, 0)
     [BENCHMARK_GUI] =
         {
             N_("GPU Drawing"),
-            "module.png",
-            callback_gui,
-            scan_gui,
-            MODULE_FLAG_NO_REMOTE | MODULE_FLAG_HIDE,
+            "monitor.png",
+            callback_benchmark_gui,
+            scan_benchmark_gui,
+            MODULE_FLAG_NO_REMOTE,
         },
-#else
-    [BENCHMARK_GUI] = {"#"},
-#endif
     {NULL}};
 
 const gchar *hi_note_func(gint entry)
@@ -220,28 +262,26 @@ const gchar *hi_note_func(gint entry)
     case BENCHMARK_SBCPU_ALL:
         return _("Alexey Kopytov's <i><b>sysbench</b></i> is required.\n"
                  "Results in events/second. Higher is better.");
-
     case BENCHMARK_MEMORY_SINGLE:
     case BENCHMARK_MEMORY_DUAL:
     case BENCHMARK_MEMORY_QUAD:
+    case BENCHMARK_MEMORY_ALL:
         return _("Alexey Kopytov's <i><b>sysbench</b></i> is required.\n"
                  "Results in MiB/second. Higher is better.");
-
+    case BENCHMARK_IPERF3_SINGLE:
+        return _("<i><b>iperf3</b></i> is required.\n"
+                 "Results in Gbits/s. Higher is better.");
     case BENCHMARK_CRYPTOHASH:
-        return _("Results in MiB/second. Higher is better.");
-
     case BENCHMARK_BLOWFISH_SINGLE:
     case BENCHMARK_BLOWFISH_THREADS:
     case BENCHMARK_BLOWFISH_CORES:
     case BENCHMARK_ZLIB:
     case BENCHMARK_GUI:
-        return _("Results in HIMarks. Higher is better.");
-
     case BENCHMARK_FFT:
     case BENCHMARK_RAYTRACE:
     case BENCHMARK_FIB:
     case BENCHMARK_NQUEENS:
-        return _("Results in seconds. Lower is better.");
+        return _("Results in HIMarks. Higher is better.");
     }
 
     return NULL;

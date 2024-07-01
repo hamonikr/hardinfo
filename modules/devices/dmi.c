@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -72,9 +72,8 @@ gboolean dmi_get_info(void)
     const gchar *group = NULL;
     DMIInfo *info;
     gboolean dmi_succeeded = FALSE;
-    gint i;
-    gchar *value;
-    const gchar *vendor;
+    guint i;
+    gchar *value=NULL;
 
     if (dmi_info) {
         g_free(dmi_info);
@@ -103,6 +102,8 @@ gboolean dmi_get_info(void)
                     break;
                 case -1:
                     state = 2;
+                    value = dmi_get_str_abs(info->id_str);
+                    break;
                 case 1:
                     value = dmi_get_str_abs(info->id_str);
                     break;
@@ -149,7 +150,7 @@ gboolean dmi_get_info(void)
     return dmi_succeeded;
 }
 
-void __scan_dmi()
+void __scan_dmi(void)
 {
   gboolean dmi_ok;
 

@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -30,7 +30,7 @@
 
 static gpointer bfish_exec(const void *in_data, gint thread_number)
 {
-    unsigned char key[] = BLOW_KEY;
+    char key[] = BLOW_KEY;
     unsigned char *data = NULL;
     unsigned long data_len = BENCH_DATA_SIZE, i = 0;
     BLOWFISH_CTX ctx;
@@ -38,7 +38,7 @@ static gpointer bfish_exec(const void *in_data, gint thread_number)
     data = malloc(BENCH_DATA_SIZE);
     memcpy(data, in_data, BENCH_DATA_SIZE);
 
-    Blowfish_Init(&ctx, key, strlen(key));
+    Blowfish_Init(&ctx, (guchar *)key, strlen(key));
     for(i = 0; i < data_len; i += 8) {
         Blowfish_Encrypt(&ctx, (unsigned long*)&data[i], (unsigned long*)&data[i+4]);
     }

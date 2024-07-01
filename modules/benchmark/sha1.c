@@ -1,8 +1,22 @@
 /*
-SHA-1 in C
-By Steve Reid <steve@edmweb.com>
-100% Public Domain
+ * SHA-1 in C
+ * Written by Steve Reid <steve@edmweb.com>
+ * Copyright by: hardinfo2 project
+ *
+ *    This program is free software; you can redistribute it and/or modify
+ *    it under the terms of the GNU General Public License v2.0 or later.
+ *
+ *    This program is distributed in the hope that it will be useful,
+ *    but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *    GNU General Public License for more details.
+ *
+ *    You should have received a copy of the GNU General Public License
+ *    along with this program; if not, write to the Free Software
+ *    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
+ */
 
+/*
 Test Vectors (from FIPS PUB 180-1)
 "abc"
   A9993E36 4706816A BA3E2571 7850C26C 9CD0D89D
@@ -47,7 +61,7 @@ A million repetitions of "a"
 
 /* Hash a single 512-bit block. This is the core of the algorithm. */
 
-void SHA1Transform(guint32 state[5], guchar buffer[64])
+void SHA1Transform(guint32 state[20], guchar buffer[64])
 {
     guint32 a, b, c, d, e;
     typedef union {
@@ -220,9 +234,9 @@ void SHA1Final(guchar digest[20], SHA1_CTX * context)
     /* Wipe variables */
     i = j = 0;
     memset(context->buffer, 0, 64);
-    memset(context->state, 0, 20);
-    memset(context->count, 0, 8);
-    memset(&finalcount, 0, 8);
+    memset(context->state, 0, 20*sizeof(guint32));
+    memset(context->count, 0, 2*sizeof(guint32));
+    memset(&finalcount, 0, sizeof(finalcount));
 #ifdef SHA1HANDSOFF		/* make SHA1Transform overwrite it's own static vars */
     SHA1Transform(context->state, context->buffer);
 #endif

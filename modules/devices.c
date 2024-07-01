@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -19,10 +19,6 @@
 #ifndef __USE_XOPEN
 #define __USE_XOPEN
 #endif /* __USE_XOPEN */
-
-#ifndef _XOPEN_SOURCE
-#define _XOPEN_SOURCE
-#endif /* _XOPEN_SOURCE */
 
 #include <gtk/gtk.h>
 #include <config.h>
@@ -39,7 +35,10 @@
 #include "devices.h"
 #include "dt_util.h"
 #include "udisks2_util.h"
+#include "storage_util.h"
 #include "pci_util.h"
+#include <json-glib/json-glib.h>
+#include "cpu_util.h"
 
 gchar *callback_processors();
 gchar *callback_gpu();
@@ -289,11 +288,10 @@ gchar *get_storage_devices_simple(void)
         return "";
     }
 
-    int i, fi;
+    guint i, fi;
     struct InfoGroup *group;
     struct InfoField *field;
     gchar *storage_devs = NULL, *tmp;
-    const gchar *dev_label, *model_wo_tags;
 
     GRegex *regex;
     regex = g_regex_new ("<.*>", 0, 0, NULL);
@@ -410,15 +408,15 @@ gchar *get_processor_max_frequency(void)
 
 gchar *get_motherboard(void)
 {
-    gchar *board_name, *board_vendor, *board_version;
-    gchar *product_name, *product_vendor, *product_version;
-    gchar *board_part = NULL, *product_part = NULL;
-    const gchar *tmp;
-    int b = 0, p = 0;
-
-    gchar *ret;
+    gchar *board_vendor;
 
 #if defined(ARCH_x86) || defined(ARCH_x86_64)
+    gchar *board_name, *board_version;
+    gchar *board_part = NULL, *product_part = NULL;
+    const gchar *tmp;
+    gchar *product_name, *product_vendor, *product_version;
+    int b = 0, p = 0;
+    gchar *ret;
     scan_dmi(FALSE);
 
     board_name = dmi_get_str("baseboard-product-name");
@@ -842,31 +840,39 @@ void hi_module_init(void)
         {
             .name = N_("Update PCI ID listing"),
             .file_name = "pci.ids",
+	    .optional = TRUE,
         },
         {
             .name = N_("Update USB ID listing"),
             .file_name = "usb.ids",
+	    .optional = TRUE,
         },
         {
             .name = N_("Update EDID vendor codes"),
             .file_name = "edid.ids",
+	    .optional = TRUE,
         },
         {
             .name = N_("Update IEEE OUI vendor codes"),
             .file_name = "ieee_oui.ids",
+	    .optional = TRUE,
         },
         {
             .name = N_("Update SD card manufacturer information"),
             .file_name = "sdcard.ids",
+	    .optional = TRUE,
         },
 #ifdef ARCH_x86
+#if JSON_CHECK_VERSION(0,20,0)
         {
             .name = N_("Update CPU flags database"),
             .file_name = "cpuflags.json",
+	    .optional = TRUE,
         },
 #endif
+#endif
     };
-    gint i;
+    guint i;
 
     for (i = 0; i < G_N_ELEMENTS(entries); i++)
         sync_manager_add_entry(&entries[i]);
@@ -887,16 +893,16 @@ void hi_module_deinit(void)
     sensor_shutdown();
     storage_shutdown();
     udisks2_shutdown();
-    g_module_close(cups);
+    if(cups) g_module_close(cups);
 }
 
 const ModuleAbout *hi_module_get_about(void)
 {
-    const static ModuleAbout ma = {
+    static const ModuleAbout ma = {
         .author = "L. A. F. Pereira",
         .description = N_("Gathers information about hardware devices"),
         .version = VERSION,
-        .license = "GNU GPL version 2",
+        .license = "GNU GPL version 2 or later.",
     };
 
     return &ma;
@@ -930,7 +936,7 @@ const gchar *hi_note_func(gint entry)
         if (storage_no_nvme) {
             return g_strdup(
                 _("Any NVMe storage devices present are not listed.\n"
-                  "<b><i>udisksd</i></b> is required for NVMe devices."));
+                  "<b><i>udisks2</i></b> is required for NVMe devices."));
         }
     }
     else if (entry == ENTRY_DMI_MEM){

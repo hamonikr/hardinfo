@@ -18,12 +18,14 @@ enum BenchmarkEntries {
     BENCHMARK_NQUEENS,
     BENCHMARK_FFT,
     BENCHMARK_RAYTRACE,
+    BENCHMARK_IPERF3_SINGLE,
     BENCHMARK_SBCPU_SINGLE,
     BENCHMARK_SBCPU_ALL,
     BENCHMARK_SBCPU_QUAD,
     BENCHMARK_MEMORY_SINGLE,
     BENCHMARK_MEMORY_DUAL,
     BENCHMARK_MEMORY_QUAD,
+    BENCHMARK_MEMORY_ALL,
     BENCHMARK_GUI,
     BENCHMARK_N_ENTRIES
 };
@@ -34,6 +36,7 @@ void benchmark_bfish_cores(void);
 void benchmark_memory_single(void);
 void benchmark_memory_dual(void);
 void benchmark_memory_quad(void);
+void benchmark_memory_all(void);
 void benchmark_sbcpu_single(void);
 void benchmark_sbcpu_all(void);
 void benchmark_sbcpu_quad(void);
@@ -45,6 +48,7 @@ void benchmark_gui(void);
 void benchmark_nqueens(void);
 void benchmark_raytrace(void);
 void benchmark_zlib(void);
+void benchmark_iperf3_single(void);
 
 typedef struct {
     double result;
@@ -52,7 +56,6 @@ typedef struct {
     int threads_used;
     int revision;
     char extra[256]; /* no \n, ; or | */
-    char user_note[256]; /* no \n, ; or | */
 } bench_value;
 
 #define EMPTY_BENCH_VALUE {-1.0f,0,0,-1,""}

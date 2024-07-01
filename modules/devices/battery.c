@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -57,7 +57,7 @@ __scan_battery_apcupsd(void)
     GHashTable  *ups_data;
     FILE	*apcaccess;
     char	buffer[512], *apcaccess_path;
-    int		i;
+    guint		i;
 
     apcaccess_path = find_program("apcaccess");
     if (apcaccess_path && (apcaccess = popen(apcaccess_path, "r"))) {
@@ -312,9 +312,10 @@ __scan_battery_apm(void)
     if ((procapm = fopen("/proc/apm", "r"))) {
         int old_percentage = percentage;
         
-        (void)fscanf(procapm, "%s %s %s 0x%x %s %s %d%%",
+        int c=fscanf(procapm, "%s %s %s 0x%x %s %s %d%%",
                apm_drv_ver, apm_bios_ver, trash,
                &ac_bat, trash, trash, &percentage);
+	if(c!=7) return;
         fclose(procapm);
         
         if (last_time == 0) {

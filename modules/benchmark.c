@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -31,6 +31,7 @@
 
 #include "appf.h"
 #include "benchmark.h"
+#include "cpu_util.h"
 
 #include "benchmark/bench_results.c"
 
@@ -47,17 +48,14 @@ static gchar *benchmark_include_results(bench_value result,
 
 char *bench_value_to_str(bench_value r)
 {
-    gboolean has_rev = r.revision >= 0;
-    gboolean has_extra = r.extra && *r.extra != 0;
-    gboolean has_user_note = r.user_note && *r.user_note != 0;
+  gboolean has_rev = (r.revision >= 0);
+  gboolean has_extra = (*r.extra != 0);
     char *ret = g_strdup_printf("%lf; %lf; %d", r.result, r.elapsed_time,
                                 r.threads_used);
-    if (has_rev || has_extra || has_user_note)
+    if (has_rev || has_extra)
         ret = appf(ret, "; ", "%d", r.revision);
-    if (has_extra || has_user_note)
+    if (has_extra)
         ret = appf(ret, "; ", "%s", r.extra);
-    if (has_user_note)
-        ret = appf(ret, "; ", "%s", r.user_note);
     return ret;
 }
 
@@ -66,13 +64,13 @@ bench_value bench_value_from_str(const char *str)
     bench_value ret = EMPTY_BENCH_VALUE;
     char rstr[32] = "", estr[32] = "", *p;
     int t, c, v;
-    char extra[256], user_note[256];
+    char extra[256];
     if (str) {
         /* try to handle floats from locales that use ',' or '.' as decimal sep
          */
         c = sscanf(
-            str, "%[-+0-9.,]; %[-+0-9.,]; %d; %d; %255[^\r\n;|]; %255[^\r\n;|]",
-            rstr, estr, &t, &v, extra, user_note);
+            str, "%[-+0-9.,]; %[-+0-9.,]; %d; %d; %255[^\r\n;|]",
+            rstr, estr, &t, &v, extra);
         if (c >= 3) {
             if ((p = strchr(rstr, ','))) {
                 *p = '.';
@@ -89,9 +87,6 @@ bench_value bench_value_from_str(const char *str)
         }
         if (c >= 5) {
             strcpy(ret.extra, extra);
-        }
-        if (c >= 6) {
-            strcpy(ret.user_note, user_note);
         }
     }
     return ret;
@@ -139,7 +134,7 @@ bench_value benchmark_crunch_for(float seconds,
     int cpu_procs, cpu_cores, cpu_threads, cpu_nodes;
     int thread_number, stop = 0;
     GSList *threads = NULL, *t;
-    GTimer *timer;
+    GTimer *timer = NULL;
     bench_value ret = EMPTY_BENCH_VALUE;
 
     timer = g_timer_new();
@@ -164,8 +159,11 @@ bench_value benchmark_crunch_for(float seconds,
         pbt->callback = callback;
         pbt->stop = &stop;
 
-        thread = g_thread_new(
-            "dispatcher", (GThreadFunc)benchmark_crunch_for_dispatcher, pbt);
+#if GLIB_CHECK_VERSION(2,32,0)
+        thread = g_thread_new("dispatcher", (GThreadFunc)benchmark_crunch_for_dispatcher, pbt);
+#else
+        thread = g_thread_create((GThreadFunc)benchmark_crunch_for_dispatcher, pbt,TRUE,NULL);
+#endif
         threads = g_slist_prepend(threads, thread);
 
         DEBUG("thread %d launched as context %p", thread_number, thread);
@@ -247,9 +245,8 @@ bench_value benchmark_parallel_for(gint n_threads,
                                    gpointer callback,
                                    gpointer callback_data)
 {
-    gchar *temp;
     int cpu_procs, cpu_cores, cpu_threads, cpu_nodes;
-    guint iter_per_thread, iter, thread_number = 0;
+    guint iter_per_thread=1, iter, thread_number = 0;
     GSList *threads = NULL, *t;
     GTimer *timer;
 
@@ -300,8 +297,12 @@ bench_value benchmark_parallel_for(gint n_threads,
         pbt->data = callback_data;
         pbt->callback = callback;
 
-        thread = g_thread_new(
-            "dispatcher", (GThreadFunc)benchmark_parallel_for_dispatcher, pbt);
+#if GLIB_CHECK_VERSION(2,32,0)
+        thread = g_thread_new("dispatcher", (GThreadFunc)benchmark_parallel_for_dispatcher, pbt);
+#else
+        thread = g_thread_create((GThreadFunc)benchmark_parallel_for_dispatcher, pbt,TRUE,NULL);
+#endif
+
         threads = g_slist_prepend(threads, thread);
 
         DEBUG("thread %d launched as context %p", thread_number, thread);
@@ -373,6 +374,7 @@ static void br_mi_add(char **results_list, bench_result *b, gboolean select)
     if (*this_marker)
         g_free(this_marker);
 }
+
 gint bench_result_sort(gconstpointer a, gconstpointer b)
 {
     bench_result *A = (bench_result *)a, *B = (bench_result *)b;
@@ -406,22 +408,26 @@ static GSList *benchmark_include_results_json(const gchar *path,
 {
     JsonParser *parser;
     JsonNode *root;
-    bench_result *this_machine = NULL;
     GSList *result_list = NULL;
+    GError *error=NULL;
 
     DEBUG("Loading benchmark results from JSON file %s", path);
 
     parser = json_parser_new();
-    if (!json_parser_load_from_file(parser, path, NULL))
-        goto out;
+    json_parser_load_from_file(parser, path, &error);
+    if(error){
+        DEBUG ("Unable to parse JSON %s %s", path, error->message);
+        g_error_free(error);
+        g_object_unref(parser);
+        return result_list;
+    }
 
     root = json_parser_get_root(parser);
-    if (json_node_get_node_type(root) != JSON_NODE_OBJECT)
-        goto out;
+    if (json_node_get_node_type(root) != JSON_NODE_OBJECT)  goto out;
 
     JsonObject *results = json_node_get_object(root);
-    if (results) {
-        JsonArray *machines = json_object_get_array_member(results, benchmark);
+    if ( results && json_object_has_member(results,benchmark) ) {
+      JsonArray *machines = json_object_get_array_member(results, benchmark);
 
         if (machines) {
             struct append_machine_result_json_data data = {
@@ -444,7 +450,7 @@ static gchar *find_benchmark_conf(void)
     const gchar *config_dir = g_get_user_config_dir();
     gchar *path;
 
-    path = g_build_filename(config_dir, "hardinfo", "benchmark.json", NULL);
+    path = g_build_filename(config_dir, "hardinfo2", "benchmark.json", NULL);
     if (g_file_test(path, G_FILE_TEST_EXISTS))
         return path;
     g_free(path);
@@ -486,11 +492,10 @@ static struct bench_window get_bench_window(GSList *result_list,
         }
     } else {
         window.min = 0;
-        window.max = len;
+        if(params.max_bench_results==0) window.max = 0; else window.max=size;
     }
 
-    DEBUG("...len: %d, loc: %d, win_size: %d, win: [%d..%d]\n", len, loc, size,
-          window.min, window.max - 1);
+    //DEBUG("...len: %d, loc: %d, win_size: %d, win: [%d..%d]\n", len, loc, size, window.min, window.max - 1);
 
     return window;
 }
@@ -505,7 +510,7 @@ static gchar *benchmark_include_results_internal(bench_value this_machine_value,
                                                  ShellOrderType order_type)
 {
     bench_result *this_machine;
-    GSList *result_list, *li;
+    GSList *result_list=NULL, *li;
     gchar *results = g_strdup("");
     gchar *output;
     gchar *path;
@@ -533,14 +538,11 @@ static gchar *benchmark_include_results_internal(bench_value this_machine_value,
     /* prepare for shell */
     moreinfo_del_with_prefix("BENCH");
 
-    const struct bench_window window =
-        get_bench_window(result_list, this_machine);
+    const struct bench_window window = get_bench_window(result_list, this_machine);
+
     for (i = 0, li = result_list; li; li = g_slist_next(li), i++) {
         bench_result *br = li->data;
-
-        if (is_in_bench_window(&window, i))
-            br_mi_add(&results, br, br == this_machine);
-
+        if (is_in_bench_window(&window, i)) br_mi_add(&results, br, br == this_machine);
         bench_result_free(br); /* no longer needed */
     }
     g_slist_free(result_list);
@@ -588,27 +590,23 @@ do_benchmark_handler(GIOChannel *source, GIOCondition condition, gpointer data)
 {
     BenchmarkDialog *bench_dialog = (BenchmarkDialog *)data;
     GIOStatus status;
-    gchar *result;
+    gchar *result = NULL;
     bench_value r = EMPTY_BENCH_VALUE;
 
     status = g_io_channel_read_line(source, &result, NULL, NULL, NULL);
     if (status != G_IO_STATUS_NORMAL) {
         DEBUG("error while reading benchmark result");
         r.result = -1.0f;
-        bench_dialog->r = r;
-        gtk_widget_destroy(bench_dialog->dialog);
+        if(bench_dialog) bench_dialog->r = r;
+	gtk_dialog_response(GTK_DIALOG(bench_dialog->dialog),100);
         return FALSE;
     }
 
-    r = bench_value_from_str(result);
-    /* attach a user note */
-    if (params.bench_user_note)
-        strncpy(r.user_note, params.bench_user_note, 255);
-    bench_dialog->r = r;
+    if(result) r = bench_value_from_str(result);
+    if(result && bench_dialog) bench_dialog->r = r;
 
-    gtk_widget_destroy(bench_dialog->dialog);
     g_free(result);
-
+    gtk_dialog_response(GTK_DIALOG(bench_dialog->dialog),GTK_RESPONSE_NONE);
     return FALSE;
 }
 
@@ -619,57 +617,57 @@ static void do_benchmark(void (*benchmark_function)(void), int entry)
     if (params.skip_benchmarks)
         return;
 
-    if (params.gui_running) {
-        gchar *argv[] = {params.argv0, "-b",           entries[entry].name,
-                         "-m",         "benchmark.so", "-a",
-                         NULL};
+    if (params.gui_running && !params.run_benchmark) {
+        gchar *argv[] = {params.argv0, "-b",entries[entry].name,NULL};
         GPid bench_pid;
         gint bench_stdout;
-        GtkWidget *bench_dialog;
+        GtkWidget *bench_dialog = NULL;
         GtkWidget *bench_image;
-        BenchmarkDialog *benchmark_dialog;
+        BenchmarkDialog *benchmark_dialog = NULL;
         GSpawnFlags spawn_flags = G_SPAWN_STDERR_TO_DEV_NULL;
-        gchar *bench_status;
-
+	gchar *bench_status;
+        GtkWidget *content_area, *box, *label;
         bench_value r = EMPTY_BENCH_VALUE;
+        GIOChannel *channel=NULL;
+        guint watch_id;
+        gboolean done=FALSE;
         bench_results[entry] = r;
 
-        bench_status =
-            g_strdup_printf(_("Benchmarking: <b>%s</b>."), entries[entry].name);
-
-        shell_view_set_enabled(FALSE);
+	bench_status = g_strdup_printf(_("Benchmarking: <b>%s</b>."), entries[entry].name);
         shell_status_update(bench_status);
+	g_free(bench_status);
 
-        g_free(bench_status);
+	bench_dialog = gtk_dialog_new_with_buttons ("Benchmarking...",
+                                      GTK_WINDOW(shell_get_main_shell()->transient_dialog),
+                                      GTK_DIALOG_DESTROY_WITH_PARENT | GTK_DIALOG_MODAL,
+				      _("Stop"), GTK_RESPONSE_ACCEPT,
+                                      NULL);
+
+	content_area = gtk_dialog_get_content_area (GTK_DIALOG(bench_dialog));
 
         bench_image = icon_cache_get_image("benchmark.png");
-        gtk_widget_show(bench_image);
 
-        bench_dialog = gtk_message_dialog_new(
-            GTK_WINDOW(shell_get_main_shell()->transient_dialog), GTK_DIALOG_MODAL,
-            GTK_MESSAGE_INFO, GTK_BUTTONS_NONE,
-            _("Benchmarking. Please do not move your mouse\n"
-              "or press any keys."));
+#if GTK_CHECK_VERSION(3,0,0)
+	box = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 1);
+#else
+	box = gtk_hbox_new(FALSE, 1);
+#endif
+	label = gtk_label_new (_("Please do not move your mouse\nor press any keys."));
 
-        gtk_widget_set_sensitive(
-            GTK_WIDGET(shell_get_main_shell()->transient_dialog), FALSE);
+#if GTK_CHECK_VERSION(3,0,0)
+	gtk_widget_set_halign (bench_image, GTK_ALIGN_START);
+#else
+        gtk_misc_set_alignment(GTK_MISC(bench_image), 0.0, 0.0);
+#endif
 
-        if (GTK_WINDOW(shell_get_main_shell()->transient_dialog) ==
-            GTK_WINDOW(shell_get_main_shell()->window)) {
-            gtk_dialog_add_buttons(GTK_DIALOG(bench_dialog), _("Cancel"),
-                                   GTK_RESPONSE_ACCEPT, NULL);
-        } else {
-            gtk_window_set_deletable(GTK_WINDOW(bench_dialog), FALSE);
-        }
+	gtk_box_pack_start (GTK_BOX(box), bench_image, TRUE, TRUE, 10);
+	gtk_box_pack_start (GTK_BOX(box), label, TRUE, TRUE, 10);
+	gtk_container_add (GTK_CONTAINER(content_area), box);
 
-        G_GNUC_BEGIN_IGNORE_DEPRECATIONS
-        gtk_message_dialog_set_image(GTK_MESSAGE_DIALOG(bench_dialog),
-                                     bench_image);
-        G_GNUC_END_IGNORE_DEPRECATIONS
+	gtk_window_set_deletable(GTK_WINDOW(bench_dialog), FALSE);
+	gtk_widget_show_all (bench_dialog);
 
-        while (gtk_events_pending()) {
-            gtk_main_iteration();
-        }
+        //while (gtk_events_pending()) {gtk_main_iteration();}
 
         benchmark_dialog = g_new0(BenchmarkDialog, 1);
         benchmark_dialog->dialog = bench_dialog;
@@ -682,45 +680,41 @@ static void do_benchmark(void (*benchmark_function)(void), int entry)
         if (g_spawn_async_with_pipes(NULL, argv, NULL, spawn_flags, NULL, NULL,
                                      &bench_pid, NULL, &bench_stdout, NULL,
                                      NULL)) {
-            GIOChannel *channel;
-            guint watch_id;
 
-            DEBUG("spawning benchmark; pid=%d", bench_pid);
-
+	    //DEBUG("spawning benchmark; pid=%d", bench_pid);
             channel = g_io_channel_unix_new(bench_stdout);
-            watch_id = g_io_add_watch(channel, G_IO_IN, do_benchmark_handler,
-                                      benchmark_dialog);
+            watch_id = g_io_add_watch(channel, G_IO_IN, do_benchmark_handler, benchmark_dialog);
 
-            switch (gtk_dialog_run(GTK_DIALOG(bench_dialog))) {
+            switch (gtk_dialog_run(GTK_DIALOG(benchmark_dialog->dialog))) {
             case GTK_RESPONSE_NONE:
-                DEBUG("benchmark finished");
+	        //DEBUG("benchmark finished");
+                if(benchmark_dialog) bench_results[entry] = benchmark_dialog->r;
+		done=TRUE;
                 break;
-            case GTK_RESPONSE_ACCEPT:
-                DEBUG("cancelling benchmark");
+	    case GTK_RESPONSE_ACCEPT:
+	        //DEBUG("cancelling benchmark");
+		break;
+	    }
 
-                gtk_widget_destroy(bench_dialog);
-                g_source_remove(watch_id);
-                kill(bench_pid, SIGINT);
-            }
-
-            bench_results[entry] = benchmark_dialog->r;
+	    //if(!done) DEBUG("benchmark NOT done");
+            if(!done) if(watch_id) g_source_remove(watch_id);
+            if(!done) kill(bench_pid, SIGINT);
+	    if(!done) params.aborting_benchmarks=1;
 
             g_io_channel_unref(channel);
-            shell_view_set_enabled(TRUE);
-            shell_status_set_enabled(TRUE);
-            gtk_widget_set_sensitive(
-                GTK_WIDGET(shell_get_main_shell()->transient_dialog), TRUE);
+	    //shell_status_set_enabled(FALSE);
+	    //shell_view_set_enabled(TRUE);
+            if(benchmark_dialog && benchmark_dialog->dialog) gtk_widget_destroy(benchmark_dialog->dialog);
             g_free(benchmark_dialog);
-
-            shell_status_update(_("Done."));
 
             return;
         }
-
-        gtk_widget_destroy(bench_dialog);
+        //shell_status_set_enabled(FALSE);
+        //shell_view_set_enabled(TRUE);
+	//gtk_widget_activate(GTK_WINDOW(shell_get_main_shell()->window));
+        if(benchmark_dialog && benchmark_dialog->dialog) gtk_widget_destroy(benchmark_dialog->dialog);
         g_free(benchmark_dialog);
-        shell_status_set_enabled(TRUE);
-        shell_status_update(_("Done."));
+        return;
     }
 
     setpriority(PRIO_PROCESS, 0, -20);
@@ -740,7 +734,7 @@ const ModuleAbout *hi_module_get_about(void)
         .author = "L. A. F. Pereira",
         .description = N_("Perform tasks and compare with other systems"),
         .version = VERSION,
-        .license = "GNU GPL version 2",
+        .license = "GNU GPL version 2 or later.",
     };
 
     return &ma;
@@ -751,10 +745,9 @@ static gchar *get_benchmark_results(gsize *len)
     void (*scan_callback)(gboolean);
     JsonBuilder *builder;
     JsonGenerator *generator;
-    JsonNode *root;
     bench_machine *this_machine;
     gchar *out;
-    gint i;
+    guint i;
 
     for (i = 0; i < G_N_ELEMENTS(entries); i++) {
         if (!entries[i].name || !entries[i].scan_callback)
@@ -778,7 +771,7 @@ static gchar *get_benchmark_results(gsize *len)
             continue;
         }
 
-        json_builder_set_member_name(builder, entries[i].name);
+        json_builder_set_member_name(builder, entries_english_name[i]);
 
         json_builder_begin_object(builder);
 
@@ -809,10 +802,15 @@ static gchar *get_benchmark_results(gsize *len)
         ADD_JSON_VALUE(int, "MachineDataVersion",
                        this_machine->machine_data_version);
         ADD_JSON_VALUE(string, "MachineType", this_machine->machine_type);
-
+        ADD_JSON_VALUE(string, "LinuxKernel", this_machine->linux_kernel);
+        ADD_JSON_VALUE(string, "LinuxOS", this_machine->linux_os);
         ADD_JSON_VALUE(boolean, "Legacy", FALSE);
         ADD_JSON_VALUE(string, "ExtraInfo", bench_results[i].extra);
-        ADD_JSON_VALUE(string, "UserNote", bench_results[i].user_note);
+	if(params.bench_user_note){
+            ADD_JSON_VALUE(string, "UserNote", params.bench_user_note);
+	}else{
+            ADD_JSON_VALUE(string, "UserNote", "");
+	}
         ADD_JSON_VALUE(double, "BenchmarkResult", bench_results[i].result);
         ADD_JSON_VALUE(double, "ElapsedTime", bench_results[i].elapsed_time);
         ADD_JSON_VALUE(int, "UsedThreads", bench_results[i].threads_used);
@@ -840,9 +838,7 @@ static gchar *get_benchmark_results(gsize *len)
 static gchar *run_benchmark(gchar *name)
 {
     int i;
-
-    DEBUG("name = %s", name);
-
+    //DEBUG("run_benchmark = %s", name);
     for (i = 0; entries[i].name; i++) {
         if (g_str_equal(entries[i].name, name)) {
             void (*scan_callback)(gboolean rescan);
@@ -854,11 +850,6 @@ static gchar *run_benchmark(gchar *name)
     (params.result_format && strcmp(params.result_format, F) == 0)
 
                 if (params.run_benchmark) {
-                    /* attach the user note */
-                    if (params.bench_user_note)
-                        strncpy(bench_results[i].user_note,
-                                params.bench_user_note, 255);
-
                     if (CHK_RESULT_FORMAT("shell")) {
                         bench_result *b =
                             bench_result_this_machine(name, bench_results[i]);
@@ -873,7 +864,6 @@ static gchar *run_benchmark(gchar *name)
             }
         }
     }
-
     return NULL;
 }
 
@@ -894,17 +884,19 @@ void hi_module_init(void)
             .name = N_("Send benchmark results"),
             .file_name = "benchmark.json",
             .generate_contents_for_upload = get_benchmark_results,
+	    .optional = FALSE,
         },
         {
             .name = N_("Receive benchmark results"),
             .file_name = "benchmark.json",
+	    .optional = FALSE,
         },
     };
 
-    sync_manager_add_entry(&se[0]);
     sync_manager_add_entry(&se[1]);
+    sync_manager_add_entry(&se[0]);
 
-    int i;
+    guint i;
     for (i = 0; i < G_N_ELEMENTS(entries) - 1 /* account for NULL */; i++)
         bench_results[i] = (bench_value)EMPTY_BENCH_VALUE;
 }

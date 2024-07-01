@@ -1,3 +1,11 @@
+hardinfo (2.1.12+hamonikr1) stable; urgency=medium
+
+  * Release on ubuntu 24.04
+   - Applied latest upstream
+   - Upstream : https://github.com/hardinfo2/hardinfo2
+
+ -- HamoniKR <pkg@hamonikr.org>  Mon, 01 Jul 2024 20:42:18 +0900
+
 hardinfo (0.5.1+git20221016-hamonikr2) stable; urgency=medium
 
   * Release on ubuntu 22.04

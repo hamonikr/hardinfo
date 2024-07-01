@@ -20,8 +20,7 @@
  * GNU General Public License for more details.
  *
  * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 
 #include <ctype.h>
@@ -123,13 +122,13 @@ static int parity(int value) {
 }
 
 static void decode_sdr_module_size(unsigned char *bytes, dmi_mem_size *size) {
-    int i, k = 0;
+    unsigned short i, k = 0;
 
     i = (bytes[3] & 0x0f) + (bytes[4] & 0x0f) - 17;
     if (bytes[5] <= 8 && bytes[17] <= 8) { k = bytes[5] * bytes[17]; }
 
     if (i > 0 && i <= 12 && k > 0) {
-        if (size) { *size = (1 << i) * k; }
+      if (size) { *size = (dmi_mem_size)k * (unsigned short)(1 << i); }
     } else {
         if (size) { *size = -1; }
     }
@@ -333,13 +332,13 @@ static void decode_ddr_module_speed(unsigned char *bytes, float *ddrclk, int *pc
 }
 
 static void decode_ddr_module_size(unsigned char *bytes, dmi_mem_size *size) {
-    int i, k;
+    unsigned short i, k;
 
     i = (bytes[3] & 0x0f) + (bytes[4] & 0x0f) - 17;
     k = (bytes[5] <= 8 && bytes[17] <= 8) ? bytes[5] * bytes[17] : 0;
 
     if (i > 0 && i <= 12 && k > 0) {
-        if (size) { *size = (1 << i) * k; }
+      if (size) { *size = (dmi_mem_size)k * (unsigned short)(1 << i); }
     } else {
         if (size) { *size = -1; }
     }
@@ -436,13 +435,13 @@ static void decode_ddr2_module_speed(unsigned char *bytes, float *ddr_clock, int
 }
 
 static void decode_ddr2_module_size(unsigned char *bytes, dmi_mem_size *size) {
-    int i, k;
+    unsigned short i, k;
 
     i = (bytes[3] & 0x0f) + (bytes[4] & 0x0f) - 17;
     k = ((bytes[5] & 0x7) + 1) * bytes[17];
 
     if (i > 0 && i <= 12 && k > 0) {
-        if (size) { *size = ((1 << i) * k); }
+      if (size) { *size = (dmi_mem_size)k * (unsigned short)(1 << i); }
     } else {
         if (size) { *size = 0; }
     }
@@ -472,7 +471,7 @@ static void decode_ddr2_module_timings(float ctime, unsigned char *bytes, float 
 }
 
 static gboolean decode_ddr2_module_ctime_for_casx(int casx_minus, unsigned char *bytes, float *ctime, float *tcl){
-    int highest_cas, i, bytei;
+    int highest_cas = 0, i, bytei;
     float ctimev = 0;
 
     switch (casx_minus){
@@ -595,7 +594,7 @@ static void decode_ddr3_module_size(unsigned char *bytes, dmi_mem_size *size) {
     unsigned int bus_width = 8 << (bytes[8] & 0x7);
     unsigned int ranks = 1 + ((bytes[7] >> 3) & 0x7);
 
-    *size = sdr_capacity / 8 * bus_width / sdr_width * ranks;
+    *size = (dmi_mem_size)sdr_capacity / 8 * bus_width / sdr_width * ranks;
 }
 
 static void decode_ddr3_module_timings(unsigned char *bytes, float *trcd, float *trp, float *tras,
@@ -757,7 +756,7 @@ static void decode_module_part_number(unsigned char *bytes, char *part_number) {
     if (part_number) {
         bytes += 8 + 64;
 
-        while (*bytes++ && *bytes >= 32 && *bytes < 127) { *part_number++ = *bytes; }
+        while (*++bytes && *bytes >= 32 && *bytes < 127) { *part_number++ = *bytes; }
         *part_number = '\0';
     }
 }
@@ -855,37 +854,36 @@ static void decode_ddr4_module_size(unsigned char *bytes, dmi_mem_size *size) {
 
     if (signal_loading == 2) lranks_per_dimm *= ((bytes[6] >> 4) & 7) + 1;
 
-    *size = sdrcap / 8 * buswidth / sdrwidth * lranks_per_dimm;
+    *size = (dmi_mem_size)sdrcap / 8 * buswidth / sdrwidth * lranks_per_dimm;
+}
+
+
+static void decode_ddr234_module_date(unsigned char weekb, unsigned char yearb, int *week, int *year) {
+    if (yearb == 0x0 || yearb == 0xff ||
+        weekb == 0x0 || weekb == 0xff) {
+        return;
+    }
+    *week = (weekb>>4) & 0xf;
+    *week *= 10;
+    *week += weekb & 0xf;
+    *year = (yearb>>4) & 0xf;
+    *year *= 10;
+    *year += yearb & 0xf;
+    *year += 2000;
+}
+
+static void decode_ddr2_module_date(unsigned char *bytes, int *week, int *year) {
+    decode_ddr234_module_date(bytes[94], bytes[93], week, year);
 }
 
 static void decode_ddr3_module_date(unsigned char *bytes, int *week, int *year) {
-    if (bytes[120] == 0x0 || bytes[120] == 0xff ||
-        bytes[121] == 0x0 || bytes[121] == 0xff) {
-        return;
-    }
-    *week = (bytes[121]>>4) & 0xf;
-    *week *= 10;
-    *week += bytes[121] & 0xf;
-    *year = (bytes[120]>>4) & 0xf;
-    *year *= 10;
-    *year += bytes[120] & 0xf;
-    *year += 2000;
+    decode_ddr234_module_date(bytes[121], bytes[120], week, year);
 }
 
 static void decode_ddr4_module_date(unsigned char *bytes, int spd_size, int *week, int *year) {
     if (spd_size < 324)
         return;
-    if (bytes[323] == 0x0 || bytes[323] == 0xff ||
-        bytes[324] == 0x0 || bytes[324] == 0xff) {
-        return;
-    }
-    *week = (bytes[324]>>4) & 0xf;
-    *week *= 10;
-    *week += bytes[324] & 0xf;
-    *year = (bytes[323]>>4) & 0xf;
-    *year *= 10;
-    *year += bytes[323] & 0xf;
-    *year += 2000;
+    decode_ddr234_module_date(bytes[324], bytes[323], week, year);
 }
 
 static void decode_ddr3_dram_manufacturer(unsigned char *bytes,
@@ -1119,6 +1117,7 @@ static GSList *decode_dimms2(GSList *eeprom_list, const gchar *driver, gboolean 
             decode_ddr2_module_size(bytes, &s->size_MiB);
             decode_ddr2_module_detail(bytes, s->type_detail);
             decode_ddr2_module_type(bytes, &s->form_factor);
+            decode_ddr2_module_date(bytes, &s->week, &s->year);
             break;
         case DDR3_SDRAM:
             s = spd_data_new();
@@ -1160,7 +1159,7 @@ static GSList *decode_dimms2(GSList *eeprom_list, const gchar *driver, gboolean 
         }
 
         if (s) {
-            strncpy(s->dev, g_basename(spd_path), 31);
+            strncpy(s->dev, g_path_get_basename(spd_path), 31);
             s->spd_driver = driver;
             s->spd_size = spd_size;
             s->type = ram_type;

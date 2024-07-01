@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -31,11 +31,7 @@
 #include "info.h"
 #include "format_early.h"
 
-#define HARDINFO_COPYRIGHT_LATEST_YEAR 2021
-
-#ifndef LOCALEDIR
-#define LOCALEDIR "/usr/share/locale"
-#endif
+#define HARDINFO2_COPYRIGHT_LATEST_YEAR 2024
 
 typedef enum {
   MODULE_FLAG_NONE = 0,
@@ -50,34 +46,32 @@ typedef struct _FileTypes		FileTypes;
 typedef struct _ProgramParameters	ProgramParameters;
 
 struct _ProgramParameters {
-  gboolean create_report;
-  gboolean force_all_details; /* for create_report, include any "moreinfo" that exists for any item */
-  gboolean show_version;
-  gboolean gui_running;
-  gboolean list_modules;
-  gboolean autoload_deps;
-  gboolean run_xmlrpc_server;
-  gboolean skip_benchmarks;
-  gboolean quiet;
-
+  gint create_report;
+  gint force_all_details; /* for create_report, include any "moreinfo" that exists for any item */
+  gint show_version;
+  gint gui_running;
+  gint skip_benchmarks;
+  gint quiet;
+  gint theme;
+  gint darkmode;
+  gint aborting_benchmarks;
   /*
    * OK to use the common parts of HTML(4.0) and Pango Markup
    * in the value part of a key/value.
    * Including the (b,big,i,s,sub,sup,small,tt,u) tags.
    * https://developer.gnome.org/pango/stable/PangoMarkupFormat.html
    */
-  gboolean markup_ok;
+  gint markup_ok;
   int fmt_opts;
 
   gint     report_format;
   gint     max_bench_results;
-
-  gchar  **use_modules;
   gchar   *run_benchmark;
   gchar   *bench_user_note;
   gchar   *result_format;
   gchar   *path_lib;
   gchar   *path_data;
+  gchar   *path_locale;
   gchar   *argv0;
 };
 
@@ -135,7 +129,6 @@ GSList	     *modules_get_list(void);
 GSList	     *modules_load_selected(void);
 GSList       *modules_load_all(void);
 void	      module_unload_all(void);
-const ModuleAbout  *module_get_about(ShellModule *module);
 gchar        *seconds_to_string(unsigned int seconds);
 
 gchar        *h_strdup_cprintf(const gchar *format, gchar *source, ...)
@@ -156,7 +149,7 @@ gchar        *module_entry_get_moreinfo(ShellModuleEntry * module_entry, gchar *
 gboolean binreloc_init(gboolean try_hardcoded);
 
 /* GTK UI stuff */
-gboolean ui_init(int *argc, char ***argv);
+gint     ui_init(int *argc, char ***argv);
 void     parameters_init(int *argc, char ***argv, ProgramParameters *params);
 extern   ProgramParameters params;
 
@@ -230,5 +223,8 @@ gg_strescape (const gchar *source,
 #define note_print(note_buff, str) note_printf((note_buff), "%s", str)
 gboolean note_cond_bullet(gboolean cond, gchar *note_buff, const gchar *desc_str);
 gboolean note_require_tool(const gchar *tool, gchar *note_buff, const gchar *desc_str);
+int cpu_procs_cores_threads(int *p, int *c, int *t);
+
+gchar *strwrap(const gchar *st, size_t w, gchar delimiter);
 
 #endif				/* __HARDINFO_H__ */

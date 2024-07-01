@@ -308,7 +308,7 @@ static const struct flag_to_meaning builtin_tab_flag_meaning[] = {
 
 static struct flag_to_meaning *tab_flag_meaning;
 
-static char all_flags[4096] = "";
+//static char all_flags[4096] = "";
 
 static void build_meaning_table_iter(JsonObject *object,
                                      const gchar *member_name,
@@ -327,10 +327,10 @@ static void build_meaning_table_iter(JsonObject *object,
 
 void cpuflags_x86_init(void)
 {
-    gchar *flag_json = g_build_filename(g_get_user_config_dir(), "hardinfo",
+    gchar *flag_json = g_build_filename(g_get_user_config_dir(), "hardinfo2",
                                         "cpuflags.json", NULL);
     gboolean use_builtin_table = TRUE;
-
+#if JSON_CHECK_VERSION(0,20,0)
     if (!g_file_test(flag_json, G_FILE_TEST_EXISTS))
         goto use_builtin_table;
 
@@ -357,6 +357,7 @@ void cpuflags_x86_init(void)
 use_builtin_table_with_json:
     g_object_unref(parser);
 use_builtin_table:
+#endif
     g_free(flag_json);
 
     if (use_builtin_table)

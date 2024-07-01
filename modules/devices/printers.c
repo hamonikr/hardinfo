@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -15,6 +15,10 @@
  *    along with this program; if not, write to the Free Software
  *    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301 USA
  */
+
+#ifndef _XOPEN_SOURCE
+  #define _XOPEN_SOURCE
+#endif
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,7 +42,8 @@ struct _CUPSDest {
 
 static int (*cups_dests_get) (CUPSDest **dests) = NULL;
 static int (*cups_dests_free) (int num_dests, CUPSDest *dests) = NULL;
-static gboolean cups_init = FALSE;
+static void (*cups_set_server)(const char *server) = NULL;
+static volatile gboolean cups_init = FALSE;
 
 GModule *cups;
 
@@ -62,9 +67,11 @@ init_cups(void)
 	}
 
 	if (!g_module_symbol(cups, "cupsGetDests", (gpointer) & cups_dests_get)
-	    || !g_module_symbol(cups, "cupsFreeDests", (gpointer) & cups_dests_free)) {
-            g_module_close(cups);
+	    || !g_module_symbol(cups, "cupsFreeDests", (gpointer) & cups_dests_free)
+	    || !g_module_symbol(cups, "cupsSetServer", (gpointer) & cups_set_server)) {
+	    g_module_close(cups);
 	    cups_init = FALSE;
+	    return;
 	}
     }
 
@@ -177,7 +184,7 @@ const struct {
 void
 scan_printers_do(void)
 {
-    int num_dests, i, j;
+    guint num_dests, j, i;
     CUPSDest *dests;
     gchar *prn_id, *prn_moreinfo;
 
@@ -186,11 +193,16 @@ scan_printers_do(void)
 
     if (!cups_init) {
         init_cups();
+    }
 
+    if(!cups_init) {
         printer_icons = g_strdup("");
         printer_list = g_strdup(_("[Printers]\n"
                                 "No suitable CUPS library found="));
         return;
+    }else{
+      //only list from our own cups, use ip for faster/secure answer
+      cups_set_server("127.0.0.1");
     }
 
     /* remove old devices from global device table */
@@ -205,7 +217,7 @@ scan_printers_do(void)
 
 	    options = g_hash_table_new(g_str_hash, g_str_equal);
 
-	    for (j = 0; j < dests[i].num_options; j++) {
+	    for (j = 0; (int)j < dests[i].num_options; j++) {
 	      g_hash_table_insert(options,
 	                          g_strdup(dests[i].options[j].name),
 	                          g_strdup(dests[i].options[j].value));

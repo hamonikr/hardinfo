@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -21,11 +21,20 @@
 #include "iconcache.h"
 #include "syncmanager.h"
 
-#ifdef HAS_LIBSOUP
 #include <libsoup/soup.h>
+
+#include <glib.h>
+#include <glib/gstdio.h>
 
 #include <stdarg.h>
 #include <string.h>
+#include <fcntl.h>
+#include <stdio.h>
+
+
+#ifndef SOUP_CHECK_VERSION
+    #define SOUP_CHECK_VERSION(a,b,c) 0
+#endif
 
 typedef struct _SyncDialog SyncDialog;
 typedef struct _SyncNetArea SyncNetArea;
@@ -60,8 +69,12 @@ static GSList *entries = NULL;
 static SoupSession *session = NULL;
 static GMainLoop *loop;
 static GQuark err_quark;
+static guint server_blobs_update_version = 0;
+static guint our_blobs_update_version = 0;
 
-#define API_SERVER_URI "https://api.hardinfo.org"
+//Note there are no personal information involved and very old
+//linux systems does not work with HTTPS so use HTTP for now
+#define API_SERVER_URI "http://api.hardinfo2.org"
 
 #define LABEL_SYNC_DEFAULT                                                     \
     _("<big><b>Synchronize with Central Database</b></big>\n"                  \
@@ -88,47 +101,30 @@ sync_dialog_netarea_start_actions(SyncDialog *sd, SyncNetAction *sna, gint n);
     if (!sna->error) {                                                         \
         sna->error = g_error_new(err_quark, code, message, ##__VA_ARGS__);     \
     }
-#endif /* HAS_LIBSOUP */
 
 gint sync_manager_count_entries(void)
 {
-#ifdef HAS_LIBSOUP
     return g_slist_length(entries);
-#else
-    return 0;
-#endif
 }
 
 void sync_manager_add_entry(SyncEntry *entry)
 {
-#ifdef HAS_LIBSOUP
     DEBUG("registering syncmanager entry ''%s''", entry->name);
 
     entry->selected = TRUE;
     entries = g_slist_append(entries, entry);
-#else
-    DEBUG("libsoup support is disabled.");
-#endif /* HAS_LIBSOUP */
 }
 
 void sync_manager_clear_entries(void)
 {
-#ifdef HAS_LIBSOUP
     DEBUG("clearing syncmanager entries");
 
     g_slist_free(entries);
     entries = NULL;
-#else
-    DEBUG("libsoup support is disabled.");
-#endif /* HAS_LIBSOUP */
 }
 
 void sync_manager_show(GtkWidget *parent)
 {
-#ifndef HAS_LIBSOUP
-    g_warning(_("HardInfo was compiled without libsoup support. (Network "
-                "Updater requires it.)"));
-#else  /* !HAS_LIBSOUP */
     SyncDialog *sd = sync_dialog_new(parent);
 
     err_quark = g_quark_from_static_string("syncmanager");
@@ -146,10 +142,8 @@ void sync_manager_show(GtkWidget *parent)
     }
 
     sync_dialog_destroy(sd);
-#endif /* HAS_LIBSOUP */
 }
 
-#ifdef HAS_LIBSOUP
 static gboolean _cancel_sync(GtkWidget *widget, gpointer data)
 {
     SyncDialog *sd = (SyncDialog *)data;
@@ -177,7 +171,7 @@ static SyncNetAction *sync_manager_get_selected_actions(gint *n)
     for (entry = entries, i = 0; entry; entry = entry->next) {
         SyncEntry *e = (SyncEntry *)entry->data;
 
-        if (e->selected) {
+        if ((entry->next==NULL) || e->selected) {//Last is version
             SyncNetAction sna = {.entry = e};
             actions[i++] = sna;
         }
@@ -187,6 +181,20 @@ static SyncNetAction *sync_manager_get_selected_actions(gint *n)
     return actions;
 }
 
+#if SOUP_CHECK_VERSION(3,0,0)
+static const char *sync_manager_get_proxy(void)
+{
+    const gchar *conf;
+
+    if (!(conf = g_getenv("HTTP_PROXY"))) {
+        if (!(conf = g_getenv("http_proxy"))) {
+            return NULL;
+        }
+    }
+
+    return conf;
+}
+#else
 static SoupURI *sync_manager_get_proxy(void)
 {
     const gchar *conf;
@@ -200,22 +208,55 @@ static SoupURI *sync_manager_get_proxy(void)
     return soup_uri_new(conf);
 }
 
+#endif
+
+static void ensure_soup_session(void)
+{
+    if (!session) {
+#if SOUP_CHECK_VERSION(3,0,0)
+      const char *proxy=sync_manager_get_proxy();
+      session = soup_session_new_with_options("timeout", 10,"proxy-resolver", proxy,  NULL);
+#else
+#if SOUP_CHECK_VERSION(2,42,0)
+        SoupURI *proxy = sync_manager_get_proxy();
+        session = soup_session_new_with_options(
+            SOUP_SESSION_TIMEOUT, 10, SOUP_SESSION_PROXY_URI, proxy, NULL);
+#else
+        SoupURI *proxy = sync_manager_get_proxy();
+        session = soup_session_async_new_with_options(
+            SOUP_SESSION_TIMEOUT, 10, SOUP_SESSION_PROXY_URI, proxy, NULL);
+#endif
+#endif
+    }
+}
+
 static void sync_dialog_start_sync(SyncDialog *sd)
 {
     gint nactions;
     SyncNetAction *actions;
+    gchar *path;
+    int fd=-1;
+    gchar buf[101];
 
-    if (!session) {
-        SoupURI *proxy = sync_manager_get_proxy();
-
-        session = soup_session_new_with_options(
-            SOUP_SESSION_TIMEOUT, 10, SOUP_SESSION_PROXY_URI, proxy, NULL);
-        /* Crashes if we unref the proxy? O_o */
-        /*if (proxy)
-           g_object_unref(proxy); */
+    path = g_build_filename(g_get_user_config_dir(), "hardinfo2",
+                           "blobs-update-version.json", NULL);
+    fd = open(path,O_RDONLY);
+    if(fd<0) {
+        free(path);
+        path = g_build_filename(params.path_data,"blobs-update-version.json", NULL);
+        fd = open(path,O_RDONLY);
     }
+    if(fd>=0){
+        int c=read(fd,buf,100);
+        sscanf(buf,"{\"update-version\":\"%u\",",&our_blobs_update_version);
+        close(fd);
+    }
+    free(path);
+    DEBUG("OUR2_BLOBS_UPDATE_VERSION=%u",our_blobs_update_version);
 
-    loop = g_main_loop_new(NULL, TRUE);
+    ensure_soup_session();
+
+    loop = g_main_loop_new(NULL, FALSE);
 
     gtk_widget_hide(sd->button_sync);
     gtk_widget_hide(sd->button_priv_policy);
@@ -236,32 +277,123 @@ static void sync_dialog_start_sync(SyncDialog *sd)
     }
 
     g_main_loop_unref(loop);
+
+    shell_do_reload(FALSE);
 }
 
-static void got_response(GObject *source, GAsyncResult *res, gpointer user_data)
+
+static void got_msg(const guint8 *buf,int len, gpointer user_data)
 {
     SyncNetAction *sna = user_data;
     GInputStream *is;
+    gchar *path;
+    int fd,updateversion=0;
+    gchar buffer[101];
+    gsize datawritten;
 
+    if (sna->entry->file_name != NULL) {
+        //check for missing config dirs
+        g_mkdir(g_get_user_config_dir(), 0766);
+        g_mkdir(g_build_filename(g_get_user_config_dir(),"hardinfo2",NULL), 0766);
+	if(strncmp(sna->entry->file_name,"blobs-update-version.json",25)==0){
+	    updateversion=1;
+	}
+        path = g_build_filename(g_get_user_config_dir(), "hardinfo2",
+                                       sna->entry->file_name, NULL);
+        GFile *file = g_file_new_for_path(path);
+        GFileOutputStream *output = g_file_replace(file, NULL, FALSE, G_FILE_CREATE_REPLACE_DESTINATION,
+                                                   NULL, &sna->error);
+
+        if(buf){
+            DEBUG("got file with len: %u", (unsigned int)len);
+            if(len>0){
+                g_output_stream_write_all(G_OUTPUT_STREAM(output),buf,len,&datawritten,NULL,&sna->error);
+            }
+        }
+
+	if(updateversion){
+            fd = open(path,O_RDONLY);
+            if(fd){
+	        int c=read(fd,buffer,100);
+                sscanf(buffer,"{\"update-version\":\"%u\",",&server_blobs_update_version);
+		DEBUG("SERVER_BLOBS_UPDATE_VERSION=%u",server_blobs_update_version);
+                close(fd);
+            }
+	}
+
+        g_free(path);
+        g_object_unref(file);
+    }
+
+}
+
+
+#if SOUP_CHECK_VERSION(2,42,0)
+static void got_response(GObject *source, GAsyncResult *res, gpointer user_data)
+#else
+static void got_response(SoupSession *source, SoupMessage *res, gpointer user_data)
+#endif
+{
+    SyncNetAction *sna = user_data;
+    GInputStream *is;
+    gchar *path;
+    int fd,updateversion=0;
+    gchar buffer[101];
+#if SOUP_CHECK_VERSION(2,42,0)
+#else
+    const guint8 *buf=NULL;
+    gsize len,datawritten;
+    SoupBuffer *soupmsg=NULL;
+#endif
+
+#if SOUP_CHECK_VERSION(2,42,0)
     is = soup_session_send_finish(session, res, &sna->error);
     if (is == NULL)
         goto out;
     if (sna->error != NULL)
         goto out;
+#endif
 
     if (sna->entry->file_name != NULL) {
-        gchar *path = g_build_filename(g_get_user_config_dir(), "hardinfo",
+        //check for missing config dirs
+        g_mkdir(g_get_user_config_dir(), 0766);
+        g_mkdir(g_build_filename(g_get_user_config_dir(),"hardinfo2",NULL), 0766);
+	if(strncmp(sna->entry->file_name,"blobs-update-version.json",25)==0){
+	    updateversion=1;
+	}
+        path = g_build_filename(g_get_user_config_dir(), "hardinfo2",
                                        sna->entry->file_name, NULL);
         GFile *file = g_file_new_for_path(path);
-        GFileOutputStream *output =
-            g_file_replace(file, NULL, FALSE, G_FILE_CREATE_REPLACE_DESTINATION,
-                           NULL, &sna->error);
+        GFileOutputStream *output = g_file_replace(file, NULL, FALSE, G_FILE_CREATE_REPLACE_DESTINATION,
+                                                   NULL, &sna->error);
 
         if (output != NULL) {
+#if SOUP_CHECK_VERSION(2,42,0)
             g_output_stream_splice(G_OUTPUT_STREAM(output), is,
                                    G_OUTPUT_STREAM_SPLICE_CLOSE_TARGET, NULL,
                                    &sna->error);
+#else
+            soupmsg=soup_message_body_flatten(res->response_body);
+            if(soupmsg){
+                soup_buffer_get_data(soupmsg,&buf,&len);
+                DEBUG("got file with len: %u", (unsigned int)len);
+                if(len>0){
+                    g_output_stream_write_all(G_OUTPUT_STREAM(output),buf,len,&datawritten,NULL,&sna->error);
+                    soup_buffer_free(soupmsg);
+	        }
+	    }
+#endif
         }
+
+	if(updateversion){
+            fd = open(path,O_RDONLY);
+            if(fd){
+	        int c=read(fd,buffer,100);
+                sscanf(buffer,"{\"update-version\":\"%u\",",&server_blobs_update_version);
+		DEBUG("SERVER_BLOBS_UPDATE_VERSION=%u",server_blobs_update_version);
+                close(fd);
+            }
+	}
 
         g_free(path);
         g_object_unref(file);
@@ -269,7 +401,9 @@ static void got_response(GObject *source, GAsyncResult *res, gpointer user_data)
 
 out:
     g_main_loop_quit(loop);
+#if SOUP_CHECK_VERSION(2,42,0)
     g_object_unref(is);
+#endif
 }
 
 static gboolean send_request_for_net_action(SyncNetAction *sna)
@@ -277,22 +411,79 @@ static gboolean send_request_for_net_action(SyncNetAction *sna)
     gchar *uri;
     SoupMessage *msg;
     guint response_code;
+    const guint8 *buf=NULL;
+    gsize len;
+    gchar *contents=NULL;
+    gsize size;
+#if !SOUP_CHECK_VERSION(3, 0, 0)
+    SoupBuffer *soupmsg=NULL;
+#endif
 
-    uri = g_strdup_printf("%s/%s", API_SERVER_URI, sna->entry->file_name);
-
+    if(!sna->entry->optional || (our_blobs_update_version<server_blobs_update_version)){
+        if(strncmp(sna->entry->file_name,"blobs-update-version.json",25)==0){
+          uri = g_strdup_printf("%s/%s?ver=%s&blobver=%d&rel=%d", API_SERVER_URI, sna->entry->file_name,VERSION,our_blobs_update_version,RELEASE);
+	} else if(strncmp(sna->entry->file_name,"benchmark.json",14)==0){
+	    if (sna->entry->generate_contents_for_upload == NULL) {//GET/Fetch
+	        if(params.bench_user_note){
+		  uri = g_strdup_printf("%s/%s?ver=%s&L=%d&rel=%d&MT=%s&BUN=%s", API_SERVER_URI,
+				        sna->entry->file_name, VERSION,
+		                        params.max_bench_results,RELEASE,
+					module_call_method("computer::getMachineType"),
+					params.bench_user_note);
+		} else {
+		  uri = g_strdup_printf("%s/%s?ver=%s&L=%d&rel=%d&&MT=%s", API_SERVER_URI,
+					sna->entry->file_name, VERSION,
+		                        params.max_bench_results, RELEASE,
+					module_call_method("computer::getMachineType"));
+		}
+	    } else {//POST/Send
+	      uri = g_strdup_printf("%s/%s?ver=%s&rel=%d", API_SERVER_URI,
+				    sna->entry->file_name, VERSION, RELEASE);
+	    }
+	} else {
+            uri = g_strdup_printf("%s/%s", API_SERVER_URI, sna->entry->file_name);
+	}
     if (sna->entry->generate_contents_for_upload == NULL) {
         msg = soup_message_new("GET", uri);
     } else {
-        gsize size;
-        gchar *contents = sna->entry->generate_contents_for_upload(&size);
+        contents = sna->entry->generate_contents_for_upload(&size);
 
         msg = soup_message_new("POST", uri);
+
+#if SOUP_CHECK_VERSION(3, 0, 0)
+        soup_message_set_request_body_from_bytes(msg, "application/octet-stream", g_bytes_new_static(contents,size));
+#else
         soup_message_set_request(msg, "application/octet-stream",
                                  SOUP_MEMORY_TAKE, contents, size);
+#endif
     }
+    if(params.gui_running){
+#if SOUP_CHECK_VERSION(3, 0, 0)
+      soup_session_send_async(session, msg, G_PRIORITY_DEFAULT, NULL, got_response, sna);
+#else
+#if SOUP_CHECK_VERSION(2,42,0)
+        soup_session_send_async(session, msg, NULL, got_response, sna);
+#else
+        soup_session_queue_message(session, msg, got_response, sna);
+#endif
+#endif
 
-    soup_session_send_async(session, msg, NULL, got_response, sna);
-    g_main_loop_run(loop);
+    } else {//Blocking/Sync sending when no gui
+
+#if SOUP_CHECK_VERSION(3, 0, 0)
+    buf=g_bytes_unref_to_data(soup_session_send_and_read(session, msg, NULL, NULL), &len);
+    got_msg(buf,len,sna);
+#else
+        soup_session_send_message(session, msg);
+        soupmsg=soup_message_body_flatten(msg->response_body);
+        if(soupmsg){
+            soup_buffer_get_data(soupmsg,&buf,&len);
+            got_msg(buf,len,sna);
+	}
+#endif
+    }
+    if(params.gui_running)
+        g_main_loop_run(loop);
 
     g_object_unref(msg);
     g_free(uri);
@@ -303,7 +494,7 @@ static gboolean send_request_for_net_action(SyncNetAction *sna)
         sna->error = NULL;
         return FALSE;
     }
-
+    }
     return TRUE;
 }
 
@@ -321,7 +512,7 @@ sync_dialog_netarea_start_actions(SyncDialog *sd, SyncNetAction sna[], gint n)
     labels = g_new0(GtkWidget *, n);
     status_labels = g_new0(GtkWidget *, n);
 
-    for (i = 0; i < n; i++) {
+    for (i = n-1; i >0; i--) {
         GtkWidget *hbox;
 
         hbox = gtk_hbox_new(FALSE, 5);
@@ -345,7 +536,7 @@ sync_dialog_netarea_start_actions(SyncDialog *sd, SyncNetAction sna[], gint n)
     while (gtk_events_pending())
         gtk_main_iteration();
 
-    for (i = 0; i < n; i++) {
+    for (i = n-1; i >0; i--) {
         gchar *markup;
 
         if (sd->flag_cancel) {
@@ -375,24 +566,7 @@ sync_dialog_netarea_start_actions(SyncDialog *sd, SyncNetAction sna[], gint n)
 
             gtk_label_set_markup(GTK_LABEL(status_labels[i]), error_str);
             if (sna[i].error) {
-                if (sna[i].error->code != 1) {
-                    /* the user has not cancelled something... */
-                    g_warning(_("Failed while performing \"%s\". Please file a "
-                                "bug report "
-                                "if this problem persists. (Use the "
-                                "Help\342\206\222Report"
-                                " bug option.)\n\nDetails: %s"),
-                                _(sna[i].entry->name), sna[i].error->message);
-                }
-
                 g_error_free(sna[i].error);
-            } else {
-                g_warning(_("Failed while performing \"%s\". Please file a bug "
-                            "report "
-                            "if this problem persists. (Use the "
-                            "Help\342\206\222Report"
-                            " bug option.)"),
-                            _(sna[i].entry->name));
             }
             break;
         }
@@ -434,8 +608,8 @@ static void sync_dialog_netarea_show(SyncDialog *sd)
     gtk_widget_show(GTK_WIDGET(sd->sna->vbox));
 
     gtk_label_set_markup(GTK_LABEL(sd->label), LABEL_SYNC_SYNCING);
-    gtk_window_set_default_size(GTK_WINDOW(sd->dialog), 0, 0);
-    gtk_window_reshow_with_initial_size(GTK_WINDOW(sd->dialog));
+    //gtk_window_set_default_size(GTK_WINDOW(sd->dialog), 0, 0);
+    //gtk_window_reshow_with_initial_size(GTK_WINDOW(sd->dialog));
 }
 
 static void sync_dialog_netarea_hide(SyncDialog *sd)
@@ -463,7 +637,7 @@ static void populate_store(GtkListStore *store)
 
         e->selected = TRUE;
 
-        gtk_list_store_append(store, &iter);
+        gtk_list_store_prepend(store, &iter);
         gtk_list_store_set(store, &iter, 0, TRUE, 1, _(e->name), 2, e, -1);
     }
 }
@@ -480,7 +654,8 @@ static void sel_toggle(GtkCellRendererToggle *cellrenderertoggle,
     gtk_tree_model_get_iter(model, &iter, path);
     gtk_tree_model_get(model, &iter, 0, &active, 2, &se, -1);
 
-    se->selected = !active;
+    if(strncmp(se->name,N_("Send benchmark results"),10)==0) //only allow to disable sending benchmark results
+      se->selected = !active;
 
     gtk_list_store_set(GTK_LIST_STORE(model), &iter, 0, se->selected, -1);
     gtk_tree_path_free(path);
@@ -587,7 +762,7 @@ static SyncDialog *sync_dialog_new(GtkWidget *parent)
     populate_store(store);
 
     priv_policy_btn = gtk_link_button_new_with_label(
-            "https://github.com/lpereira/hardinfo/wiki/Privacy-Policy",
+            "https://github.com/hardinfo2/hardinfo2?tab=readme-ov-file#privacy-policy",
             _("Privacy Policy"));
     gtk_widget_show(priv_policy_btn);
     gtk_box_pack_start(GTK_BOX(dialog1_vbox), priv_policy_btn, FALSE, FALSE, 0);
@@ -647,4 +822,76 @@ static void sync_dialog_destroy(SyncDialog *sd)
     sync_dialog_netarea_destroy(sd->sna);
     g_free(sd);
 }
-#endif /* HAS_LIBSOUP */
+
+static gboolean sync_one(gpointer data)
+{
+    SyncNetAction *sna = data;
+    if (sna->entry->generate_contents_for_upload){
+        if(params.gui_running){
+           goto out;
+        }
+    }
+    DEBUG("Syncronizing: %s", sna->entry->name);
+
+    if(params.gui_running){
+        gchar *msg = g_strdup_printf(_("Synchronizing: %s"), _(sna->entry->name));
+        shell_status_update(msg);
+        shell_status_pulse();
+        g_free(msg);
+    }
+    send_request_for_net_action(sna);
+
+out:
+    g_main_loop_unref(loop);
+    idle_free(sna);
+    return FALSE;
+}
+
+void sync_manager_update_on_startup(int send_benchmark)//0:normal only get, 1:send benchmark
+{
+    GSList *entry;
+    gchar *path;
+    int fd=-1;
+    gchar buf[101];
+    path = g_build_filename(g_get_user_config_dir(), "hardinfo2",
+                           "blobs-update-version.json", NULL);
+    fd = open(path,O_RDONLY);
+    if(fd<0) {
+        free(path);
+        path = g_build_filename(params.path_data,"blobs-update-version.json", NULL);
+        fd = open(path,O_RDONLY);
+    }
+    if(fd>=0){
+        int c=read(fd,buf,100);
+        sscanf(buf,"{\"update-version\":\"%u\",",&our_blobs_update_version);
+        close(fd);
+    }
+    free(path);
+    DEBUG("OUR1_BLOBS_UPDATE_VERSION=%u",our_blobs_update_version);
+
+    ensure_soup_session();
+
+    loop = g_main_loop_new(NULL, FALSE);
+
+    if(!params.gui_running) entries=g_slist_reverse(entries);//wrong direction for sync sending
+    for (entry = entries; entry; entry = entry->next) {
+        SyncNetAction *action = g_new0(SyncNetAction, 1);
+
+        action->entry = entry->data;
+	if(params.gui_running){
+            loop = g_main_loop_ref(loop);
+            g_idle_add(sync_one, action);
+	} else {
+	  //if send benchmark - only send benchmark
+	  //if not send benchmark - sync everything else
+	    if( ((strncmp(action->entry->file_name,"benchmark.json",14)==0) &&
+		 (action->entry->generate_contents_for_upload) && send_benchmark) ||
+		((!(strncmp(action->entry->file_name,"benchmark.json",14)==0) ||
+		 (!action->entry->generate_contents_for_upload)) && (!send_benchmark)) ){
+            loop = g_main_loop_ref(loop);
+	    sync_one(action);
+	    }
+	}
+    }
+    if(!params.gui_running) entries=g_slist_reverse(entries);//wrong direction for sync sending
+}

@@ -4,7 +4,7 @@
  *
  *    This program is free software; you can redistribute it and/or modify
  *    it under the terms of the GNU General Public License as published by
- *    the Free Software Foundation, version 2.
+ *    the Free Software Foundation, version 2 or later.
  *
  *    This program is distributed in the hope that it will be useful,
  *    but WITHOUT ANY WARRANTY; without even the implied warranty of
@@ -33,7 +33,6 @@ processor_scan(void)
     FILE *cpuinfo;
     gchar buffer[128];
     gchar *rep_pname = NULL;
-    gchar *tmpfreq_str = NULL;
     GSList *pi = NULL;
 
     cpuinfo = fopen(PROC_CPUINFO, "r");
@@ -43,7 +42,7 @@ processor_scan(void)
 #define CHECK_FOR(k) (g_str_has_prefix(tmp[0], k))
     while (fgets(buffer, 128, cpuinfo)) {
         gchar **tmp = g_strsplit(buffer, ":", 2);
-        if (tmp[0] && tmp[1]) {
+        if (tmp[0] && tmp[1] && !strstr(tmp[0],"isa-") ) {//just drop empty isa-ext
             tmp[0] = g_strstrip(tmp[0]);
             tmp[1] = g_strstrip(tmp[1]);
         } else {
@@ -53,7 +52,7 @@ processor_scan(void)
 
         //get_str("Processor", rep_pname);
 
-        if ( CHECK_FOR("hart") ) {
+        if ( CHECK_FOR("processor") ) {
             /* finish previous */
             if (processor) {
                 procs = g_slist_append(procs, processor);
@@ -104,7 +103,7 @@ processor_scan(void)
         processor = (Processor *) pi->data;
 
         /* strings can't be null or segfault later */
-        STRIFNULL(processor->model_name, _("RISC-V Processor") );
+        STRIFNULL(processor->model_name, "RISC-V Processor" );
         UNKIFNULL(processor->mmu);
         UNKIFNULL(processor->isa);
         UNKIFNULL(processor->uarch);
