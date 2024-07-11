@@ -1,3 +1,10 @@
+hardinfo (2.1.12+hamonikr2) stable; urgency=medium
+
+  * Release for bookworm arm64
+   - No changes
+
+ -- HamoniKR <pkg@hamonikr.org>  Fri, 12 Jul 2024 03:01:57 +0900
+
 hardinfo (2.1.12+hamonikr1) stable; urgency=medium
 
   * Release on ubuntu 24.04
